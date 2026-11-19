@@ -92,15 +92,22 @@ class WestVirginia(Source):
                     return pd.read_excel(io.BytesIO(data), dtype=str, engine="calamine" if name.lower().endswith("x") else "xlrd")
             return pd.read_excel(path, dtype=str, engine="calamine" if path.suffix.lower() == ".xlsx" else "xlrd")
         except Exception as e:
-            self.log.warning("cannot read %s: %s", path.name, e)
+            self.log.warning("cannot read %s: %r", path.name, e)
             return None
 
     def _prod(self, path: Path) -> pd.DataFrame:
         raw = self._read(path)
         if raw is None:
             return pd.DataFrame()
-        cols = {re.sub(r"[^a-z0-9]", "", c.lower()): c for c in raw.columns}
-        api_c = next((cols[k] for k in ("api", "apinumber", "apinum", "permit") if k in cols), None)
+        def norm(c: str) -> str:
+            k = c.lower().strip()
+            # older files: GAS_PRODUCTION_JANUARY / OIL_PRODUCTION_FEB ... -> jangas / feboil
+            m = re.match(r"^(gas|oil|water|ngl)[_ ]?(?:production|prod)?[_ ]?([a-z]{3})[a-z]*$", k.replace("-", "_"))
+            if m and m.group(2) in MONTHS:
+                return m.group(2) + m.group(1)
+            return re.sub(r"[^a-z0-9]", "", k)
+        cols = {norm(c): c for c in raw.columns}
+        api_c = next((cols[k] for k in ("api", "apinumber", "apinum", "permit", "apino") if k in cols), None)
         if api_c is None or not any(f"jan{k}" in cols for k in ("gas", "oil")):
             self.log.warning("%s: unrecognised layout %s", path.name, list(raw.columns)[:12])
             return pd.DataFrame()
