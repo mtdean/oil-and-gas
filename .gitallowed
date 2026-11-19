@@ -1,0 +1,3 @@
+# git-secrets false positives: HTTP query parameter *names*; values come from .env (git-ignored)
+"api_key": key
+"api_key": key, "file_type": "json"

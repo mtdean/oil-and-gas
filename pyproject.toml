@@ -1,0 +1,26 @@
+[project]
+name = "ogdata"
+version = "0.1.0"
+description = "US oil & gas well-level production, well locations, and macro data pipeline"
+requires-python = ">=3.11"
+dependencies = [
+  "duckdb>=1.0",
+  "pandas>=2.2",
+  "pyarrow>=15",
+  "requests>=2.31",
+  "openpyxl>=3.1",
+  "pyshp>=2.3",
+  "pyyaml>=6",
+  "python-calamine>=0.2",
+  "xlrd>=2",
+]
+
+[project.scripts]
+ogdata = "ogdata.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

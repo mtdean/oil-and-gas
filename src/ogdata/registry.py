@@ -1,0 +1,30 @@
+"""All known sources. Add a module under sources/ and list its class here."""
+from __future__ import annotations
+
+from .sources.base import Source
+from .sources import nd, tx, nm, co, wy, ut, mt, pa, oh, wv, ks, ok, la, ca, bsee, fracfocus
+from .sources import eia_bulk, eia, fred, cftc, bakerhughes, onrr, dallasfed
+
+_CLASSES: list[type[Source]] = [
+    # well-level / entity-level production + locations (ordered roughly by production volume)
+    tx.Texas, nm.NewMexico, nd.NorthDakota, co.Colorado, ok.Oklahoma, wy.Wyoming, pa.Pennsylvania, la.Louisiana,
+    ut.Utah, oh.Ohio, wv.WestVirginia, mt.Montana, ks.Kansas, ca.California, bsee.BSEE, fracfocus.FracFocus,
+    # macro
+    eia_bulk.EIABulk, eia.EIA, fred.FRED, cftc.CFTC, bakerhughes.BakerHughes, onrr.ONRR, dallasfed.DallasFed,
+]
+
+_instances: dict[str, Source] | None = None
+
+
+def all_sources() -> list[Source]:
+    global _instances
+    if _instances is None:
+        _instances = {c.name: c() for c in _CLASSES}
+    return list(_instances.values())
+
+
+def get(name: str) -> Source:
+    for s in all_sources():
+        if s.name == name:
+            return s
+    raise SystemExit(f"unknown source '{name}'. known: {', '.join(s.name for s in all_sources())}")
