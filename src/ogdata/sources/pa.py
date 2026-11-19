@@ -52,6 +52,7 @@ class Pennsylvania(Source):
     granularity = "well"
     history = "1980 (annual), 2010 (semiannual), 2015-01 (monthly)"
     has_latlon = True
+    notes = "Greenport export often answers 400; periods that fail are skipped and retried on later runs, so history fills in gradually."
 
     def _token(self, ctx, url):
         for attempt in range(5):
@@ -73,7 +74,7 @@ class Pennsylvania(Source):
         import requests
         from ..http import UA
         status = None
-        for attempt in range(8):
+        for attempt in range(3):
             s = requests.Session()
             s.headers["User-Agent"] = UA
             try:

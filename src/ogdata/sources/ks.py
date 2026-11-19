@@ -70,8 +70,9 @@ class Kansas(Source):
         my = raw["MONTH-YEAR"].astype("string").str.split("-", expand=True)
         mo = pd.to_numeric(my[0], errors="coerce")
         yr = pd.to_numeric(my[1], errors="coerce")
-        months = mo.map(lambda v: 1 if 1 <= v <= 12 else 12 if v == 0 else None)
-        period = pd.to_datetime(dict(year=yr, month=mo.where(mo.between(1, 12), 1), day=1), errors="coerce")
+        mo = mo.astype("Float64")
+        months = pd.Series(pd.NA, index=mo.index, dtype="Float64").mask(mo.between(1, 12), 1.0).mask(mo == 0, 12.0)
+        period = pd.to_datetime(dict(year=yr, month=mo.where(mo.between(1, 12), 1).fillna(1), day=1), errors="coerce")
         prod = pd.to_numeric(raw["PRODUCTION"], errors="coerce")
         is_oil = raw["PRODUCT"].astype("string").str.upper().str.startswith("O")
         df = pd.DataFrame({
