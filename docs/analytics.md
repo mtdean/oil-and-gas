@@ -79,6 +79,35 @@ ogdata forecast --api10 3002543210 --html well.html     # existing well: its own
    tornado sensitivities; the P50 monthly cash-flow table; the analog list. `--html` writes a report with
    fan charts, NPV histogram, cash flow, tornado and an analog map.
 
+### Grounding the Monte Carlo (`analytics/calibration.py`)
+
+The production side of the simulation is tied to the warehouse rather than to fixed noise dials:
+
+* **Paths are real wells.** Each simulated path draws an analog (distance × recency weight) and uses that well's
+  actual monthly history for the months it has produced, then that well's own Arps fit beyond. Between-well
+  dispersion in the analog set is therefore the base uncertainty.
+* **Extrapolation error is measured, not assumed.** The method is hindcast on the analogs: fit each on its first
+  12 producing months (6 or 24 for PDP wells of that age), forecast the next 24, and record log(actual / forecast).
+  Pools are built at anchor ages 12, 24 and 48 months and each path draws from the pool matching the age it is
+  extrapolated from (tails winsorised at the 2nd/98th percentile; a normal with the residuals' width when a pool has
+  5–19 members, a 35 % fallback when fewer). The drawn error is applied as a transient: it ramps in over six months,
+  holds through the 24 months it was measured on, then decays with a 36-month half-life, because surprises against a
+  decline fit are mostly curtailment, shut-ins, offset-frac hits and refracs rather than permanent shifts. The report prints the bias and P10/P90 of
+  that hindcast so the reader can see how predictable the area is.
+* **Leave-one-out check.** Each analog's 24-month cum is predicted from the weighted median of the other analogs;
+  the spread of that error is reported next to the analog map as the error of "a new well here will look like its
+  neighbours".
+* **Vintage.** Analog weights halve every `--vintage-halflife` years of age (default 6, 0 disables). A weighted
+  regression of log(12-month cum) on vintage year is run across the analogs; when |t| > 2 the slope (capped at
+  ±25 %/yr) scales older analogs to the target vintage (this year for a new well, the well's own vintage in PDP mode).
+  The report says when a trend was applied.
+* **Young PDP wells borrow shape.** In `--api10` mode a well with n months of history uses an analog's (Di, b)
+  with probability 12/(n+12) instead of its own fit, so a six-month-old well is two-thirds analog shape.
+* **Prices** were already historical: the OU paths' volatility and oil/gas correlation come from ten years of
+  monthly spot returns around the STEO deck.
+
+All of these numbers are in `metrics.grounding` of the JSON output and in the "Grounding" line of the text summary.
+
 ## Dashboard: `ogdata dashboard`
 
 Writes `dashboards/og_monitor.html`, a single self-contained page (D3 from cdnjs, data embedded):

@@ -151,8 +151,9 @@ discount at 10 %. It is a screening number under uniform assumptions, not a rese
 
 `ogdata forecast --lat .. --lon .. --html out.html` (or `--api10` for an existing well) renders the same chart
 library into a one-well page: analog band from the nearest wells' real history, Monte Carlo P10/P50/P90, NPV
-distribution, P50 cash flow, tornado, 3×3 scenario grid, analog map and list, assumptions. Code:
-`analytics/forecast.py` (numbers) and `analytics/report.py` (page).
+distribution, P50 cash flow, tornado, 3×3 scenario grid, analog map and list, assumptions, and a hindcast KPI
+showing how well the method predicted the analogs themselves (see `analytics.md`, "Grounding the Monte Carlo"). Code:
+`analytics/forecast.py` and `analytics/calibration.py` (numbers) and `analytics/report.py` (page).
 
 ## Caveats to keep in view
 

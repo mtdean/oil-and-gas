@@ -59,7 +59,7 @@ def cmd_forecast(args):
     if args.api10 is None and (args.lat is None or args.lon is None):
         raise SystemExit("give --lat/--lon or --api10")
     spec = forecast.AnalogSpec(radius_mi=args.radius, min_wells=args.min_wells, vintage_min=args.vintage_min, formation=args.formation,
-                               product=args.product, include_lease_alloc=args.include_lease_alloc)
+                               product=args.product, include_lease_alloc=args.include_lease_alloc, vintage_half_life=args.vintage_halflife)
     overrides = {k: v for k, v in {"nri": args.nri, "capex_mm": args.capex_mm, "loe_fixed_month": args.loe_fixed, "loe_var_per_boe": args.loe_var,
                                    "oil_diff": args.oil_diff, "gas_diff": args.gas_diff, "discount_rate": args.discount, "ngl_yield_bbl_per_mmcf": args.ngl_yield}.items() if v is not None}
     con = forecast.analytics_connection()
@@ -215,6 +215,7 @@ def main(argv=None):
     fc.add_argument("--formation", help="substring filter on reported formation/pool/field")
     fc.add_argument("--product", choices=["oil", "gas"])
     fc.add_argument("--include-lease-alloc", action="store_true", help="allow TX/KS multi-well lease allocations as analogs")
+    fc.add_argument("--vintage-halflife", type=float, default=6.0, help="analog recency weighting half-life in years (0 = off)")
     fc.add_argument("--sims", type=int, default=2000)
     fc.add_argument("--seed", type=int, default=7)
     fc.add_argument("--pdp", action="store_true", help="no capex (existing production)")

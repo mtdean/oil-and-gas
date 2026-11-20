@@ -21,7 +21,7 @@ import pandas as pd
 
 from ..paths import DATA
 from ..storage import connect, build_views
-from . import decline, economics, prices
+from . import calibration, decline, economics, prices
 from .wellcurves import ADIR
 
 HORIZON = 360
@@ -52,6 +52,7 @@ class AnalogSpec:
     product: str | None = None            # 'oil' | 'gas' | None (auto: majority of analogs)
     include_lease_alloc: bool = False     # TX/KS multi-well lease allocations are noisy; off by default
     min_months: int = 6
+    vintage_half_life: float = 6.0        # recency weighting of analogs: an analog N years older than the newest loses 50% weight per half-life (0 = off)
 
 
 def find_analogs(con, lat: float, lon: float, spec: AnalogSpec) -> pd.DataFrame:
@@ -118,25 +119,55 @@ def analog_curves(con, api10s: list[str], horizon: int = HORIZON) -> pd.DataFram
     return out
 
 
-def simulate_production(analogs: pd.DataFrame, sims: int, rng: np.random.Generator, horizon: int = HORIZON,
-                        qi_noise: float = 0.15) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sample analog wells (weighted) and perturb their Arps parameters -> (S,H) oil, gas and the picked index."""
-    pick = rng.choice(len(analogs), size=sims, p=analogs.weight.values)
-    a = analogs.iloc[pick]
-    t = np.arange(horizon)[None, :]
+def analog_paths(analogs: pd.DataFrame, hist: dict, horizon: int = HORIZON, target_vintage: int | None = None, slope: float = 0.0) -> dict:
+    """Per-analog base paths (N, horizon): the well's actual observed months, then its own Arps fit anchored on its last
+    three producing months. Returns {'oil','gas','n_obs','vfactor'}; vfactor scales older analogs to the target vintage."""
+    n = len(analogs)
+    n_obs = hist["n_obs"]
+    out = {"n_obs": n_obs}
+    t_idx = np.arange(horizon)[None, :]
+    for prod in ("oil", "gas"):
+        base = np.where(np.isfinite(hist[prod]), hist[prod], 0.0)
+        ok = analogs[f"{prod}_fit_ok"].values.astype(bool)
+        q0 = np.where(ok, analogs[f"{prod}_q_last3"].values, 0.0).astype(float)
+        t_last = np.nan_to_num(analogs[f"{prod}_t_last"].values.astype(float), nan=0.0)
+        peak = np.nan_to_num(analogs[f"{prod}_peak_month"].values.astype(float), nan=0.0)
+        di = np.where(ok, analogs[f"{prod}_di"].values, 0.1).astype(float)
+        b = np.where(ok, analogs[f"{prod}_b"].values, 0.5).astype(float)
+        # rate at month m beyond the observed history: hyperbolic from the anchor (t_last, q0)
+        dt = t_idx - t_last[:, None]
+        ext = decline.rate(q0[:, None], di[:, None], b[:, None], np.maximum(dt, 0) + (t_last - peak)[:, None]) / np.maximum(
+            decline.rate(1.0, di[:, None], b[:, None], (t_last - peak)[:, None]), 1e-12) * np.ones_like(dt)
+        ext = np.where(ok[:, None], ext, 0.0)
+        beyond = t_idx >= n_obs[:, None]
+        out[prod] = np.where(beyond, ext, base)
+    vf = np.ones(n)
+    if slope and target_vintage is not None:
+        vf = np.exp(slope * (target_vintage - analogs.vintage.fillna(target_vintage).values.astype(float)))
+        vf = np.clip(vf, 0.67, 1.5)
+    out["vfactor"] = vf
+    return out
+
+
+def simulate_production(analogs: pd.DataFrame, paths: dict, calib: "calibration.Calibration", weights: np.ndarray, sims: int,
+                        rng: np.random.Generator, horizon: int = HORIZON) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Draw analog wells (distance x vintage weights); each draw is that well's real history followed by its own
+    extrapolation, with the extrapolated months multiplied by a hindcast-sampled error and the whole path scaled to
+    the target vintage. Returns (S,H) oil, gas and the picked analog index."""
+    pick = rng.choice(len(analogs), size=sims, p=weights)
+    eps = calib.sample(rng, sims, anchor_age=paths["n_obs"][pick])   # error pool matched to the age each path is extrapolated from
+    months_beyond = np.arange(horizon)[None, :] - paths["n_obs"][pick][:, None]
+    beyond = months_beyond >= 0
+    prof = calibration.error_profile(months_beyond)             # transient error: ramps in, holds 24 months, decays
+    mult = np.exp(eps[:, None] * prof) * paths["vfactor"][pick][:, None]
     out = {}
     for prod in ("oil", "gas"):
-        ok = a[f"{prod}_fit_ok"].values.astype(bool)
-        qi = np.where(ok, a[f"{prod}_qi"].values, 0.0) * np.exp(rng.normal(0, qi_noise, sims) - qi_noise ** 2 / 2)
-        di = np.where(ok, a[f"{prod}_di"].values, 0.1) * np.exp(rng.normal(0, 0.10, sims))
-        b = np.clip(np.where(ok, a[f"{prod}_b"].values, 0.5) + rng.normal(0, 0.05, sims), 0, 1.5)
-        q = decline.rate(qi[:, None], di[:, None], b[:, None], t)
-        econ = decline.ECON_OIL if False else (30.0 if prod == "oil" else 300.0)
+        q = paths[prod][pick] * mult
+        econ = 30.0 if prod == "oil" else 300.0
         q = np.where(q >= econ, q, 0.0)
-        # once a product hits its limit keep it at zero afterwards
         dead = np.cumsum(q <= 0, axis=1) > 0
         dead[:, 0] = False
-        q = np.where(dead & (np.arange(horizon)[None, :] > 12), 0.0, q)
+        q = np.where(dead & beyond & (np.arange(horizon)[None, :] > 12), 0.0, q)  # once below the limit in the extrapolated part, stay shut in
         out[prod] = q
     return out["oil"], out["gas"], pick
 
@@ -210,25 +241,46 @@ def run(lat: float, lon: float, spec: AnalogSpec | None = None, assumptions: eco
     curves = analog_curves(con, analogs.api10.tolist())
     deck = prices.load_deck(con, horizon=HORIZON)
     p_oil, p_gas = prices.simulate_paths(deck, sims, rng)
+    # historical grounding: analog histories, recency weights, hindcast of the method on the analogs themselves
+    weights = calibration.vintage_weights(analogs, spec.vintage_half_life)
+    analogs = analogs.assign(weight=weights)
+    hist = calibration.histories(con, analogs, HORIZON)
+    target_vintage = calibration.vintage_target(analogs) if not api10 else int(target.iloc[0]["vintage"]) if target is not None else None
+    k_fit = 12
+    if api10 and target is not None:
+        n_hist = int(max(target.iloc[0]["oil_fit_n"], target.iloc[0]["gas_fit_n"]))
+        k_fit = 6 if n_hist < 12 else 12 if n_hist < 24 else 24
+    calib = calibration.calibrate(analogs, hist, product, k=k_fit, h=24)
+    if api10:
+        calib.vintage_slope = 0.0  # PDP paths are the well's own; vintage scaling only applies to analog paths
 
     if api10 and target is not None:
         # PDP mode: this well's own fitted curve anchored at its last rate; uncertainty from fit RMSE + analog b/Di spread
         tw = target.iloc[0]
         oil = np.zeros((sims, HORIZON)); gas = np.zeros((sims, HORIZON))
+        # young wells borrow decline shape from the analogs: with probability 12/(n+12) a path uses an analog's (Di, b)
+        n_hist = int(max(tw["oil_fit_n"], tw["gas_fit_n"]))
+        w_shrink = 12.0 / (n_hist + 12.0)
+        borrow = rng.random(sims) < w_shrink
+        apick = rng.choice(len(analogs), size=sims, p=weights)
+        eps = calib.sample(rng, sims, anchor_age=np.full(sims, n_hist))   # hindcast error pool for this well's age
         for prod, arr in (("oil", oil), ("gas", gas)):
             if tw[f"{prod}_fit_ok"]:
                 sig = min(float(tw[f"{prod}_fit_rmse_log"]) / 3, 0.25)
                 q0 = tw[f"{prod}_q_last3"] * np.exp(rng.normal(0, sig, sims) - sig ** 2 / 2)
-                di = tw[f"{prod}_di"] * np.exp(rng.normal(0, 0.10, sims))
-                b = np.clip(tw[f"{prod}_b"] + rng.normal(0, 0.05, sims), 0, 1.5)
+                a_ok = analogs[f"{prod}_fit_ok"].values[apick].astype(bool)
+                di = np.where(borrow & a_ok, analogs[f"{prod}_di"].values[apick], tw[f"{prod}_di"] * np.exp(rng.normal(0, 0.05, sims)))
+                b = np.where(borrow & a_ok, analogs[f"{prod}_b"].values[apick], np.clip(tw[f"{prod}_b"] + rng.normal(0, 0.03, sims), 0, 1.5))
                 remaining = max(HORIZON - int(tw[f"{prod}_t_last"]) - 1, 12)
                 f = decline.forecast_from_anchor(q0, np.full(sims, float(tw[f"{prod}_t_last"] - tw[f"{prod}_peak_month"])), di, b, remaining)
+                f = f * np.exp(eps[:, None] * calibration.error_profile(np.arange(remaining))[None, :])
                 f = np.where(f >= (30.0 if prod == "oil" else 300.0), f, 0.0)
                 arr[:, :remaining] = f
         pick = None
         a = economics.Assumptions(**{**a.__dict__, "capex_mm": 0.0}).resolved()
     else:
-        oil, gas, pick = simulate_production(analogs, sims, rng)
+        paths = analog_paths(analogs, hist, HORIZON, target_vintage, calib.vintage_slope)
+        oil, gas, pick = simulate_production(analogs, paths, calib, weights, sims, rng, HORIZON)
 
     cf = economics.cashflows(oil, gas, p_oil, p_gas, a)
     npv10 = economics.npv(cf.net_cf, a.discount_rate)
@@ -250,6 +302,8 @@ def run(lat: float, lon: float, spec: AnalogSpec | None = None, assumptions: eco
         "npv10_usd": _pct(npv10), "pv10_operating_usd": _pct(pv_op), "irr": _pct(irr), "payout_months": _pct(payout),
         "life_months": _pct(cf.life_months), "prob_npv10_positive": float((npv10 > 0).mean()),
         "revenue_12m_usd": _pct(cf.revenue[:, :12].sum(1)), "operating_cf_12m_usd": _pct(cf.operating_cf[:, :12].sum(1)),
+        "grounding": {**calib.to_dict(), "vintage_half_life_years": spec.vintage_half_life, "target_vintage": target_vintage,
+                      "pdp_shrink_weight": (12.0 / (int(max(target.iloc[0]["oil_fit_n"], target.iloc[0]["gas_fit_n"])) + 12.0)) if api10 and target is not None else None},
     }
     # deterministic scenario grid: production P10/P50/P90 x price deck -25% / base / +25%
     scen = {}
@@ -338,6 +392,15 @@ def summary_text(r: ForecastResult) -> str:
               "Scenario NPV10 ($MM): production bear/base/bull (P10/P50/P90 EUR) x price deck -25% / base / +25%"]
     for name, row in r.scenarios.items():
         lines.append(f"  {name:5s} EUR {row['eur_oil_bbl']/1e3:7.0f} Mbbl {row['eur_gas_mcf']/1e6:6.2f} Bcf | " + "  ".join(f"{k}: {v['npv10']/1e6:7.2f}" for k, v in row.items() if k.startswith('price')))
+    g = m.get("grounding") or {}
+    if g:
+        pct = lambda v: "n/a" if v is None else f"{(np.exp(v) - 1) * 100:+.0f}%"
+        lines += ["", f"Grounding: {g['effective_n_analogs']:.0f} effective analogs (vintage half-life {g['vintage_half_life_years']:.0f} y)"
+                      f"; hindcast fit {g['k_fit_months']} mo -> next {g['horizon_months']} mo on {g['n_hindcast']} analogs: bias {pct(g['hindcast_bias_p50'])}, P10 {pct(g['hindcast_err_p10'])}, P90 {pct(g['hindcast_err_p90'])}"
+                      f"; leave-one-out {g['horizon_months']}-mo cum on {g['n_loo']} analogs: P10 {pct(g['loo_err_p10'])}, P90 {pct(g['loo_err_p90'])}"
+                      + (f"; vintage trend {g['vintage_slope_per_year'] * 100:+.1f}%/yr, analogs scaled to {g['target_vintage']} vintage (factor capped 0.67-1.5)" if g.get("vintage_slope_per_year") else "; no significant vintage trend")
+                      + ("; error pools by anchor age " + ", ".join(f"{k} mo: n={v['n']} P10 {pct(v['p10'])} P90 {pct(v['p90'])}" for k, v in sorted(g.get("pools", {}).items(), key=lambda kv: int(kv[0]))) if g.get("pools") else "")
+                      + (f"; PDP shape borrowed from analogs with weight {g['pdp_shrink_weight']:.0%}" if g.get("pdp_shrink_weight") else "")]
     lines += ["", "Tornado (NPV10 change vs P50/base, $MM):"]
     for _, s in r.sensitivities.iterrows():
         lines.append(f"  {s.driver:28s} {s.low/1e6:+8.2f} .. {s.high/1e6:+8.2f}")
