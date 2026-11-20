@@ -48,6 +48,9 @@ cp .env.example .env                                        # then edit: EIA_API
   On the owner's home machine, keys missing from `.env` were read from a sibling repo's `.env`
   (`paths.load_shared_dotenv`); that fallback is harmless when the sibling repo does not exist.
 * **Network:** several sources refuse scripted clients (§6). That is expected, not a bug to fix.
+* **Databricks:** the owner's work environment uses Databricks as the shared back end. The settings are reserved in
+  `.env.example` and the design (volume mirror + external tables, analytics stay in DuckDB) is in `docs/databricks.md`;
+  it is not implemented yet.
 
 ## 4. Rebuilding the database from nothing
 

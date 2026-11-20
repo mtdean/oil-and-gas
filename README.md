@@ -104,6 +104,8 @@ type curves and analog searches. Crown royalties replace severance taxes and Can
 
 ## Handing this off / rebuilding on another machine
 
+`docs/dashboard.md` walks through every dashboard panel with its data lineage, screenshots and the full dashboard
+source; `docs/databricks.md` is the plan and settings for running the warehouse on Databricks (work environment).
 `AGENTS.md` is the playbook for a coding agent (or a person) taking this over: setup, the full rebuild
 order with timings, which sources refuse automation and what to drop in manually, data semantics that are
 easy to get wrong, verification queries and troubleshooting. `CLAUDE.md` repeats the non-negotiables.
