@@ -28,9 +28,22 @@ STATE_TAX = {
     "CA": (0.0, 0.0, "CA no severance; ad valorem ~1% of reserve value, assessment fee"),
     "AK": (0.0, 0.0, "AK production tax is net-profits based; model separately"),
     "GOM": (0.0, 0.0, "Federal offshore: no state tax; royalty 18.75% (set nri)"),
+    # Canada: Crown royalties are price- and rate-sensitive sliding scales, not severance taxes. These are
+    # flat effective placeholders for Crown land (freehold ~ 12.5-17.5% lessor royalty instead; set nri).
+    "AB": (0.12, 0.08, "Alberta Modernized Royalty Framework: 5% until C* payout then 5-40% sliding; ~12% oil / 8% gas effective placeholder"),
+    "SK": (0.10, 0.07, "Saskatchewan Crown royalty (4th-tier oil/gas, price-sensitive); ~10% oil / 7% gas effective placeholder"),
+    "BC": (0.09, 0.06, "BC new royalty framework (2024): 5% pre-payout, 5-40% post; ~9% oil / 6% gas effective placeholder"),
+    "MB": (0.10, 0.10, "Manitoba Crown royalty placeholder"),
 }
 # Typical 2024-26 D&C+facilities cost for a modern horizontal well, $MM, by state (used when capex not given).
-STATE_CAPEX_MM = {"TX": 8.0, "NM": 8.5, "ND": 7.5, "CO": 5.5, "WY": 7.0, "OK": 7.5, "UT": 6.0, "MT": 7.5, "LA": 11.0, "PA": 9.0, "WV": 9.0, "OH": 9.0, "KS": 1.2, "CA": 2.0}
+STATE_CAPEX_MM = {"TX": 8.0, "NM": 8.5, "ND": 7.5, "CO": 5.5, "WY": 7.0, "OK": 7.5, "UT": 6.0, "MT": 7.5, "LA": 11.0, "PA": 9.0, "WV": 9.0, "OH": 9.0, "KS": 1.2, "CA": 2.0,
+                  "AB": 6.5, "SK": 3.0, "BC": 7.5, "MB": 2.5}  # Canada in US$: Montney/Duvernay ~C$8-10M, Viewfield Bakken ~C$4M, BC Montney ~C$10M
+
+# Default price differentials vs WTI ($/bbl) and Henry Hub ($/mmbtu) where the state's benchmark is not US Gulf/Mid-Con.
+# Canadian light (MSW) trades ~$5-10 under WTI, heavy (WCS) $12-25 under: override --oil-diff for heavy-oil wells.
+# AECO / Station 2 gas trades $1-2 under Henry Hub.
+STATE_DIFF = {"AB": (-8.0, -1.50), "SK": (-9.0, -1.50), "BC": (-8.0, -1.75), "MB": (-9.0, -1.50), "ND": (-4.0, -1.0), "WY": (-4.0, -0.75), "PA": (-3.0, -1.0), "WV": (-3.0, -1.0), "OH": (-3.0, -1.0)}
+DEFAULT_DIFF = (-3.0, -0.75)
 
 
 @dataclass
@@ -38,8 +51,8 @@ class Assumptions:
     state: str = "TX"
     nri: float = 0.75                # net revenue interest (1 - royalty burden) on a 100% WI basis
     wi: float = 1.0                  # working interest
-    oil_diff: float = -3.0           # $/bbl vs WTI
-    gas_diff: float = -0.75          # $/mmbtu vs Henry Hub (basis)
+    oil_diff: float | None = None    # $/bbl vs WTI; None -> STATE_DIFF / DEFAULT_DIFF
+    gas_diff: float | None = None    # $/mmbtu vs Henry Hub (basis); None -> STATE_DIFF / DEFAULT_DIFF
     btu_factor: float = 1.10         # mmbtu per mcf at the wellhead
     gas_shrink: float = 0.85         # fraction of wellhead gas sold as residue after processing
     ngl_yield_bbl_per_mmcf: float = 60.0   # barrels of NGL per mmcf of wellhead gas (0 for dry gas plays)
@@ -59,8 +72,11 @@ class Assumptions:
 
     def resolved(self) -> "Assumptions":
         so, sg, _ = STATE_TAX.get(self.state, (0.05, 0.05, ""))
+        do, dg = STATE_DIFF.get(self.state, DEFAULT_DIFF)
         return replace(self, sev_tax_oil=self.sev_tax_oil if self.sev_tax_oil is not None else so,
                        sev_tax_gas=self.sev_tax_gas if self.sev_tax_gas is not None else sg,
+                       oil_diff=self.oil_diff if self.oil_diff is not None else do,
+                       gas_diff=self.gas_diff if self.gas_diff is not None else dg,
                        capex_mm=self.capex_mm if self.capex_mm is not None else STATE_CAPEX_MM.get(self.state, 7.0))
 
     def to_dict(self) -> dict:

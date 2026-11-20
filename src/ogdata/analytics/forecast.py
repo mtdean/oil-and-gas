@@ -61,6 +61,7 @@ def find_analogs(con, lat: float, lon: float, spec: AnalogSpec) -> pd.DataFrame:
                  "(d.oil_fit_ok OR d.gas_fit_ok)"]
         if not spec.include_lease_alloc:
             where.append("d.alloc <> 'lease_alloc'")
+        where.append("NOT d.history_truncated")
         if spec.formation:
             where.append(f"lower(coalesce(d.formation, '')) LIKE '%{spec.formation.lower()}%'")
         if spec.product:
@@ -160,7 +161,7 @@ class ForecastResult:
             if isinstance(o, (pd.Timestamp,)):
                 return o.isoformat()
             raise TypeError(str(type(o)))
-        an = self.analogs[["api10", "state", "county", "formation", "operator", "vintage", "dist", "oil_eur", "gas_eur", "oil_ip90_pd", "gas_ip90_pd", "oil_b", "oil_di", "alloc", "status"]]
+        an = self.analogs[["api10", "state", "county", "formation", "operator", "vintage", "lat", "lon", "dist", "oil_eur", "gas_eur", "oil_ip90_pd", "gas_ip90_pd", "oil_b", "oil_di", "gas_b", "gas_di", "alloc", "status"]]
         payload = {
             "inputs": self.inputs, "assumptions": self.assumptions.to_dict(),
             "deck": {"source": self.deck.source, "vol_oil": self.deck.vol_oil, "vol_gas": self.deck.vol_gas, "rho": self.deck.rho,

@@ -70,7 +70,8 @@ def ticker(con) -> list[dict]:
                                   ("CRUDE STOCKS", "eia:PET.WCESTUS1.W", "kbbl", "0"), ("GAS STORAGE", "eia:NG.NW2_EPG0_SWO_R48_BCF.W", "bcf", "0"),
                                   ("PERMIAN DUCs", "eia:STEO.DUCSPM.M", "wells", "0"), ("PERMIAN RIGS", "eia:STEO.RIGSPM.M", "rigs", "0"),
                                   ("HY OAS", "fred:BAMLH0A0HYM2", "%", "2"), ("CCC OAS", "fred:BAMLH0A3HYC", "%", "2"), ("HY YIELD", "fred:BAMLH0A0HYM2EY", "%", "2"),
-                                  ("UST 10Y", "fred:DGS10", "%", "2"), ("DXY BROAD", "fred:DTWEXBGS", "idx", "1")):
+                                  ("UST 10Y", "fred:DGS10", "%", "2"), ("DXY BROAD", "fred:DTWEXBGS", "idx", "1"),
+                                  ("WCS", "ab:WCS", "$/bbl", "2"), ("WCS-WTI", "ab:WCS_WTI_DIFF", "$/bbl", "2"), ("AB GAS REF", "ab:GASREF", "C$/GJ", "2")):
         l = _latest(con, sid)
         if l:
             items.append({"label": label, "unit": unit, "fmt": fmt, **l})
@@ -113,6 +114,7 @@ def indicators(con) -> dict:
         "sector": {"O&G extraction employment (k)": _series(con, "fred:CES1021100001", since10), "O&G extraction IP (2017=100)": _series(con, "fred:IPG211S", since10)},
         "dollar": _series(con, "fred:DTWEXBGS", since3, weekly=True),
         "brent_wti": {},
+        "canada": {"WCS": _series(con, "ab:WCS", since10), "WTI": _series(con, "ab:WTI", since10), "WCS − WTI": _series(con, "ab:WCS_WTI_DIFF", since10), "AB gas reference C$/GJ": _series(con, "ab:GASREF", since10)},
     }
     bw = con.execute(f"""
         SELECT date_trunc('week', b.period) d, avg(b.value - w.value) v FROM macro_series b JOIN macro_series w USING (period)
@@ -151,21 +153,21 @@ def state_production(con) -> dict:
 def hex_cells(con) -> list[dict]:
     df = con.execute(f"""
         WITH w AS (
-            SELECT d.api10, d.state, d.county, d.vintage, d.status, d.primary_product, d.alloc,
+            SELECT d.api10, d.state, d.county, d.vintage, d.status, d.primary_product, d.alloc, d.history_truncated,
                    d.oil_cum12, d.gas_cum12, d.oil_eur, d.gas_eur, d.boe_eur, d.oil_ip90_pd, d.gas_ip90_pd,
                    v.pv10_usd, v.cf_next12_usd, v.oil_remaining_bbl, v.gas_remaining_mcf, v.oil_rate_bpd, v.gas_rate_mcfd,
                    floor(l.lat / {CELL}) * {CELL} AS clat, floor(l.lon / {CELL}) * {CELL} AS clon
             FROM well_decline d JOIN well_locations l USING (api10) LEFT JOIN well_value v USING (api10)
-            WHERE l.lat BETWEEN 24 AND 50 AND l.lon BETWEEN -125 AND -66
+            WHERE l.lat BETWEEN 24 AND 62 AND l.lon BETWEEN -141 AND -52
         )
         SELECT clat, clon, mode(state) st, mode(county) county, count(*) n,
                count(*) FILTER (WHERE vintage >= 2015) n15, count(*) FILTER (WHERE status = 'active') n_active,
-               count(*) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc') n18,
-               quantile_cont(oil_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND primary_product = 'oil') cum12_oil,
-               quantile_cont(gas_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND primary_product = 'gas') cum12_gas,
-               quantile_cont(oil_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND primary_product = 'oil') eur_oil,
-               quantile_cont(gas_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND primary_product = 'gas') eur_gas,
-               quantile_cont(boe_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc') eur_boe,
+               count(*) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated) n18,
+               quantile_cont(oil_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'oil') cum12_oil,
+               quantile_cont(gas_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'gas') cum12_gas,
+               quantile_cont(oil_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'oil') eur_oil,
+               quantile_cont(gas_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'gas') eur_gas,
+               quantile_cont(boe_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated) eur_boe,
                sum(pv10_usd) pv10, sum(cf_next12_usd) cf12, sum(oil_remaining_bbl + gas_remaining_mcf / 6) rem_boe,
                sum(oil_rate_bpd + gas_rate_mcfd / 6) boed, sum(oil_rate_bpd) bopd, sum(gas_rate_mcfd) mcfd,
                quantile_cont(pv10_usd, 0.5) FILTER (WHERE status = 'active') pv10_med
@@ -214,7 +216,7 @@ def vintage_table(con) -> list[dict]:
                quantile_cont(gas_eur, 0.5) FILTER (WHERE primary_product='gas' AND gas_fit_ok) eur_gas_med,
                quantile_cont(oil_ip90_pd, 0.5) FILTER (WHERE primary_product='oil') ip90_oil_med,
                quantile_cont(oil_d1_eff, 0.5) FILTER (WHERE primary_product='oil' AND oil_fit_ok) d1_oil_med
-        FROM well_decline WHERE vintage BETWEEN 2008 AND year(current_date) - 1 AND alloc <> 'lease_alloc'
+        FROM well_decline WHERE vintage BETWEEN 2008 AND year(current_date) - 1 AND alloc <> 'lease_alloc' AND NOT history_truncated
         GROUP BY 1, 2 HAVING count(*) >= 20 ORDER BY 1, 2
     """).df()
     return _clean(df.to_dict(orient="records"))
@@ -258,7 +260,7 @@ def coverage(con) -> list[dict]:
                count(DISTINCT api10) FILTER (WHERE alloc = 'lease_alloc') lease_alloc_wells
         FROM well_monthly GROUP BY 1 ORDER BY 1
     """).df()
-    fits = con.execute("SELECT state, count(*) n, count(*) FILTER (WHERE oil_fit_ok OR gas_fit_ok) fitted, count(*) FILTER (WHERE status='active') active FROM well_decline GROUP BY 1").df()
+    fits = con.execute("SELECT state, count(*) n, count(*) FILTER (WHERE oil_fit_ok OR gas_fit_ok) fitted, count(*) FILTER (WHERE status='active') active, count(*) FILTER (WHERE history_truncated) truncated FROM well_decline GROUP BY 1").df()
     df = df.merge(fits, on="state", how="left")
     return _clean(df.to_dict(orient="records"))
 
@@ -273,7 +275,8 @@ def build(out: str | None = None) -> Path:
     con.close()
     tpl = (ASSETS / "dashboard_template.html").read_text()
     topo = (ASSETS / "states-10m.json").read_text()
-    html = tpl.replace("/*__DATA__*/", "const DATA = " + json.dumps(_clean(data), separators=(",", ":")) + ";\nconst US_TOPO = " + topo + ";")
+    na_topo = (ASSETS / "na-provinces.json").read_text()
+    html = tpl.replace("/*__DATA__*/", "const DATA = " + json.dumps(_clean(data), separators=(",", ":")) + ";\nconst US_TOPO = " + topo + ";\nconst NA_TOPO = " + na_topo + ";")
     html = html.replace("/*__THEME_CSS__*/", (ASSETS / "theme.css").read_text()).replace("/*__CHARTS_JS__*/", (ASSETS / "charts.js").read_text())
     dest = Path(out) if out else ROOT / "dashboards" / "og_monitor.html"
     dest.parent.mkdir(parents=True, exist_ok=True)

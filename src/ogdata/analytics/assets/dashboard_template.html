@@ -39,7 +39,7 @@
     <div class="grid">
       <div class="panel span12"><div class="hd"><h2>Well heat map</h2><span class="sub" id="map-sub">0.2° cells · hover for county detail</span>
           <div class="ctl seg" id="map-seg"></div></div>
-        <div class="bd"><div class="map" id="map"></div><div class="ramp" id="ramp"></div></div></div>
+        <div class="bd"><div class="map" id="heatmap"></div><div class="ramp" id="ramp"></div></div></div>
       <div class="panel span12"><div class="hd"><h2>Top counties by PDP PV10</h2><span class="sub">active wells with decline fits, base deck</span></div>
         <div class="bd" id="counties"></div></div>
     </div>
@@ -77,7 +77,7 @@
 <script>
 /*__DATA__*/
 /*__CHARTS_JS__*/
-const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska'};
+const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska',AB:'Alberta',SK:'Saskatchewan',BC:'British Columbia',MB:'Manitoba'};
 const toPts = (s, parse = parseD) => s.d.map((d, i) => ({ d: parse(d), v: s.v[i] }));
 const sum = a => a.reduce((x, y) => x + (y || 0), 0);
 document.getElementById('meta').textContent = `data as of ${DATA.generated}`;
@@ -120,7 +120,7 @@ RENDER.overview = () => {
   lineChart(document.getElementById('deck-chart'), { height: 240, yZero: true, series: [{ label: 'WTI $/bbl (deck)', color: SERIES[0], points: pdm.map((d, i) => ({ d, v: cf.price_deck.wti[i] })), thick: true },
     { label: 'Henry Hub $/mmbtu ×10 (deck)', color: SERIES[1], points: pdm.map((d, i) => ({ d, v: cf.price_deck.hh[i] * 10 })) }], yFmt: v => '$' + fmt.num(v, 0) });
   document.getElementById('deck-sub').textContent = `EIA STEO through its horizon, then flat · vol oil ${(cf.price_deck.vol_oil * 100).toFixed(0)}% / gas ${(cf.price_deck.vol_gas * 100).toFixed(0)}% ann., ρ ${cf.price_deck.rho.toFixed(2)} (Monte Carlo inputs)`;
-  table(document.getElementById('coverage'), { rows: DATA.coverage, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'lease_alloc_wells', label: 'lease-allocated', num: true, fmt: v => fmt.num(v) },
+  table(document.getElementById('coverage'), { rows: DATA.coverage, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'lease_alloc_wells', label: 'lease-allocated', num: true, fmt: v => fmt.num(v) }, { key: 'truncated', label: 'pre-history wells', num: true, fmt: v => fmt.num(v) },
     { key: 'fitted', label: 'decline fits', num: true, fmt: v => fmt.num(v) }, { key: 'active', label: 'active', num: true, fmt: v => fmt.num(v) }, { key: 'well_months', label: 'well-months', num: true, fmt: v => fmt.num(v) }, { key: 'first', label: 'first', fmt: v => (v || '').slice(0, 7) }, { key: 'last', label: 'last', fmt: v => (v || '').slice(0, 7) }] });
 };
 
@@ -139,10 +139,16 @@ const METRICS = [
 RENDER.map = () => {
   const seg = d3.select('#map-seg'); METRICS.forEach((m, i) => seg.append('button').attr('data-k', m.k).classed('on', i === 0).text(m.label.split(' (')[0]));
   seg.on('click', e => { const b = e.target.closest('button'); if (!b) return; seg.selectAll('button').classed('on', function () { return this === b; }); draw(b.dataset.k); });
-  const el = document.getElementById('map'); const W = Math.max(el.clientWidth || 900, 320), H = Math.round(W * 0.62);
+  // the div is 'heatmap', not 'map': a #map hash would otherwise make browsers scroll to the div and cut off the panel header
+  const el = document.getElementById('heatmap'); const W = Math.max(el.clientWidth || 900, 320), H = Math.round(W * 0.62);
   const svg = d3.select(el).html('').append('svg').attr('viewBox', `0 0 ${W} ${H}`);
-  const proj = d3.geoAlbersUsa().fitExtent([[8, 8], [W - 8, H - 8]], topojson.feature(US_TOPO, US_TOPO.objects.states)); const path = d3.geoPath(proj);
-  svg.append('g').selectAll('path').data(topojson.feature(US_TOPO, US_TOPO.objects.states).features).join('path').attr('class', 'state').attr('d', path);
+  // lower 48 + Canadian provinces on one Albers (no Alaska/Hawaii insets: no well data there yet)
+  // us-atlas includes AK (02), HI (15) and the territories (60+: PR, GU, AS, VI, MP) which would stretch the fit across the Pacific
+  const lower48 = topojson.feature(US_TOPO, US_TOPO.objects.states).features.filter(f => { const id = String(f.id).padStart(2, '0'); return id !== '02' && id !== '15' && id <= '56'; });
+  const provinces = topojson.feature(NA_TOPO, NA_TOPO.objects.provinces).features;
+  const fitTo = { type: 'FeatureCollection', features: lower48.concat(provinces.filter(f => ['CA-AB', 'CA-BC', 'CA-SK', 'CA-MB'].includes(f.properties.iso))) };
+  const proj = d3.geoAlbers().rotate([100, 0]).parallels([33, 55]).fitExtent([[8, 8], [W - 8, H - 8]], fitTo); const path = d3.geoPath(proj);
+  svg.append('g').selectAll('path').data(lower48.concat(provinces)).join('path').attr('class', 'state').attr('d', path);
   const cells = svg.append('g');
   const cellPath = c => { const s = 0.2; const p = [[c.lon, c.lat], [c.lon + s, c.lat], [c.lon + s, c.lat + s], [c.lon, c.lat + s]].map(q => proj(q)); return p.some(q => !q) ? null : 'M' + p.map(q => q.join(',')).join('L') + 'Z'; };
   function draw(key) { const m = METRICS.find(x => x.k === key); const data = DATA.hex.filter(c => c[key] != null && c[key] > 0 && cellPath(c));
@@ -197,6 +203,11 @@ RENDER.indicators = () => {
   lineChart(panel('Working gas in storage', 'EIA weekly, Bcf lower 48'), { height: 200, series: [{ label: 'Bcf', color: SERIES[2], points: toPts(I.stocks.gas_storage), area: true }], yFmt: v => fmt.num(v) });
   lineChart(panel('Managed money net length', 'CFTC disaggregated, contracts (long − short)'), { height: 200, yZero: true, series: multi(I.cftc) });
   lineChart(panel('Dallas Fed Energy Survey', 'diffusion indexes, all firms, quarterly'), { height: 200, yZero: true, series: multi(I.dallas_fed) });
+  if (I.canada && I.canada.WCS.d.length) {
+    lineChart(panel('Canadian crude', 'WCS vs WTI, US$/bbl monthly · Alberta Economic Dashboard'), { height: 200, yZero: true, series: [{ label: 'WCS', color: SERIES[0], points: toPts(I.canada.WCS), thick: true }, { label: 'WTI', color: SERIES[1], points: toPts(I.canada.WTI) }], yFmt: v => '$' + fmt.num(v, 0) });
+    lineChart(panel('WCS − WTI differential', 'heavy-oil basis, US$/bbl · pipeline egress, TMX, diluent'), { height: 200, yZero: true, series: [{ label: '$/bbl', color: SERIES[3], points: toPts(I.canada['WCS − WTI']), area: true }], yFmt: v => '$' + fmt.num(v, 0) });
+    lineChart(panel('Alberta gas reference price', 'C$/GJ monthly (AECO-linked Crown royalty reference)'), { height: 200, yZero: true, series: [{ label: 'C$/GJ', color: SERIES[2], points: toPts(I.canada['AB gas reference C$/GJ']) }], yFmt: v => 'C$' + fmt.num(v, 2) });
+  }
   if (I.credit && I.credit['HY OAS'].d.length) {
     lineChart(panel('Credit spreads', 'ICE BofA option-adjusted spreads, % · FRED'), { height: 200, yZero: true, series: multi(I.credit), yFmt: v => fmt.num(v, 1) + '%' });
     lineChart(panel('HY yield vs Treasuries', 'ICE BofA HY effective yield, UST 2y/10y, % · FRED'), { height: 200, yZero: true, series: multi(I.rates), yFmt: v => fmt.num(v, 1) + '%' });
@@ -208,7 +219,7 @@ RENDER.indicators = () => {
   lineChart(panel('Crude production by state', 'EIA monthly, kb/d', 6), { height: 220, series: multi(I.state_crude_prod).slice(0, 8) });
   lineChart(panel('Gas gross withdrawals by state', 'EIA monthly, MMcf/month', 6), { height: 220, series: multi(I.state_gas_withdrawals).slice(0, 8) });
   grid.append('div').attr('class', 'panel span12').html(`<div class="hd"><h2>What to watch</h2><span class="sub">leading indicators for well-level credit</span></div><div class="bd note">
-   <b>Price & curve:</b> WTI/HH spot vs the STEO path drives every PV in this monitor; the deck tab shows the current assumption. <b>Activity:</b> rigs and DUCs by basin lead new-well supply by 3–9 months; falling DUCs with flat rigs means completion crews are eating inventory. <b>Productivity:</b> new-well production per rig and the vintage charts show whether operators are drilling worse rock (degradation shows up first as lower 12-month cums in the newest vintage). <b>Legacy decline:</b> the STEO legacy-change series is the treadmill operators must out-drill; a steeper number means base production is more fragile. <b>Positioning:</b> CFTC managed-money net length is a sentiment / flow gauge for price shocks. <b>Sentiment:</b> Dallas Fed business activity, outlook and uncertainty indexes turn before capex budgets. <b>Inventories:</b> crude stocks ex-SPR and gas storage vs seasonal norms set the near-term price skew. <b>Credit:</b> HY and CCC option-adjusted spreads price refinancing risk for levered producers; a CCC blow-out with flat HY means the market is singling out the weakest balance sheets. <b>Costs:</b> the drilling and support-services PPIs lead well-cost (capex) revisions by a quarter or two; rising cost PPI into a falling WTI squeezes breakevens from both sides. <b>Differentials:</b> Brent − WTI widening signals US export pull and tighter domestic balances; the dollar moves inversely with crude in risk-off episodes.</div>`);
+   <b>Price & curve:</b> WTI/HH spot vs the STEO path drives every PV in this monitor; the deck tab shows the current assumption. <b>Activity:</b> rigs and DUCs by basin lead new-well supply by 3–9 months; falling DUCs with flat rigs means completion crews are eating inventory. <b>Productivity:</b> new-well production per rig and the vintage charts show whether operators are drilling worse rock (degradation shows up first as lower 12-month cums in the newest vintage). <b>Legacy decline:</b> the STEO legacy-change series is the treadmill operators must out-drill; a steeper number means base production is more fragile. <b>Positioning:</b> CFTC managed-money net length is a sentiment / flow gauge for price shocks. <b>Sentiment:</b> Dallas Fed business activity, outlook and uncertainty indexes turn before capex budgets. <b>Inventories:</b> crude stocks ex-SPR and gas storage vs seasonal norms set the near-term price skew. <b>Credit:</b> HY and CCC option-adjusted spreads price refinancing risk for levered producers; a CCC blow-out with flat HY means the market is singling out the weakest balance sheets. <b>Costs:</b> the drilling and support-services PPIs lead well-cost (capex) revisions by a quarter or two; rising cost PPI into a falling WTI squeezes breakevens from both sides. <b>Differentials:</b> Brent − WTI widening signals US export pull and tighter domestic balances; the dollar moves inversely with crude in risk-off episodes. <b>Canada:</b> the WCS − WTI differential sets Alberta/Saskatchewan heavy-oil netbacks; it blows out when egress is constrained (apportionment, outages) and narrows with TMX utilisation and lower diluent costs. The Alberta gas reference price is the AECO proxy behind Crown gas royalties.</div>`);
 };
 
 /* ---- value tab */

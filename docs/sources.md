@@ -95,6 +95,50 @@ All URLs were tested on 2026-11-19. Sizes are download sizes.
 ### Other states (planned, lower priority)
 Arkansas (AOGC), Mississippi (MSOGB), Alabama (GSA/SOGB), Michigan (EGLE), Illinois (ISGS), Kentucky (KGS), Nebraska (NOGCC), Virginia (DMME), New York (DEC), Nevada, South Dakota.
 
+## Canada — provincial regulators (added 2026-11-20)
+
+Canadian wells use the 16-character UWI as the identifier (stored in `api10`/`well_id`) and the province
+code as `state` (AB, SK, BC). Volumes are converted from metric (m3 × 6.28981 = bbl, e3m3 × 35.3147 = mcf);
+condensate is added to oil. Crown royalties replace severance taxes in the economics (`STATE_TAX` placeholders).
+
+### Alberta (`ab`, active)
+* Production: Petrinex public Conventional Volumetric extract, one zip per production month,
+  `https://www.petrinex.gov.ab.ca/publicdata/API/Files/AB/Vol/{YYYY-MM}/CSV` (nested zip -> CSV, ~8 MB / 530k rows).
+  Well-level rows are `ActivityID=PROD, FromToIDType=WI`. **Public history starts 2022-01**; a month is
+  published ~4 weeks after it ends and the newest 6 months are re-checked weekly for amendments.
+  Pre-2022 well production is the paid AER "Well Production Data" product (1962+).
+* Wells: AER ST37 Excel package `https://static.aer.ca/prd/documents/sts/st37/ST_37_Excel.zip` (184 MB, monthly):
+  bottom holes by UWI with BH lat/lon, surface holes by licence with SH lat/lon, production strings with
+  field/pool codes + status. Pool names from `https://www.petrinex.gov.ab.ca/bbreports/PRAFieldandPoolCodes.csv`.
+  static.aer.ca refused the pipeline's request with 403 on 2026-11-20 (the same URL downloads fine in a
+  browser): if that persists, download the zip manually into `data/raw/ab/ST_37_Excel.zip`; the connector
+  uses whatever file is present.
+* Reference tables: `bbreports/PRAActivityCodes.csv`, `PRAProductCodes.csv`, `PRAFormationCodes.csv`.
+
+### Saskatchewan (`sk`, active)
+* Production: Petrinex public extract, same API with `SK` (~3 MB / 210k rows per month), 2022-01+.
+  Pre-2022 well production is the Ministry's paid Production/Injection bundle.
+* Wells: Ministry of Energy and Resources ArcGIS `https://gis.saskatchewan.ca/arcgis/rest/services/Economy/Petroleum/MapServer`
+  layers 0 (vertical, ~120k) and 1 (non-vertical, ~68k): UWI, surface + bottom-hole lat/lon, status, trajectory,
+  spud / on-production dates, completion pool & formations, crude type. Paged 2,000 per request, refreshed every 14 days.
+
+### British Columbia (`bc`, active)
+* Production: BC Energy Regulator `https://iris.bcogc.ca/download/prod_csv.zip` (124 MB; `zone_prd.csv` 372 MB,
+  3.1M zone-month rows, **1954 to present**, refreshed ~1st of month). Zone rows summed to the wellbore.
+* Wells: `https://iris.bcogc.ca/download/drill_csv.zip` (`wells.csv` surface NAD83 lat/lon packed as DDMMSSss,
+  `drill_ev.csv` UWI/spud/TD, `w_status.csv`, `compl_ev.csv`, `codes.csv` formation names (table FORT)).
+* Also available, not loaded: `hydraulic_fracture_csv.zip` (frac data), `facilities.csv`, `rig_activity_list.csv`.
+* Petrinex also lists a BC public data page (`/public-data/bcpd/`) but BCER's own files are more complete.
+
+### Manitoba (planned)
+* Petrinex Manitoba public data page exists (`/public-data/mbpd/`); API path presumably `.../Files/MB/Vol/...` (not probed).
+
+### Canadian macro (`camacro`, active)
+* Alberta Economic Dashboard API: `https://api.economicdata.alberta.ca/data?table=OilPrices&Type=WCS;WTI`
+  (monthly US$/bbl, WTI 1986+, WCS 2005+) and `...?table=NaturalGasPrices&Type=NatGas` (Alberta gas reference
+  price, C$/GJ). Derived series `ab:WCS_WTI_DIFF`.
+* Not loaded: CAOEC weekly rig counts (no bulk file found; BOE Report republishes), CER production tables.
+
 ## Federal
 
 ### BSEE — Gulf of America OCS (`bsee`, active)

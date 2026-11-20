@@ -30,6 +30,21 @@ Caveats: EURs for very young wells (< 12 months) are unstable (wide `b`); lease-
 wells inherit the lease's shape; Ohio (quarterly/annual) and the Gulf of Mexico (completion-level)
 are not in `well_monthly`.
 
+### Truncated history
+
+`well_decline.history_truncated` is true when a well's first observed month is the first month of its
+state's published history and the well file says it was spud / first produced more than 6 months earlier
+(West Virginia pre-1985 wells, every Alberta and Saskatchewan well older than 2022, ...). These wells take
+their vintage from the well file, keep their PDP fit (anchored on the latest months, which is all the
+valuation needs) and are excluded from type curves and analog sets, since their early decline was never observed.
+
+### Canadian assumptions
+
+Provinces use Crown-royalty placeholders in `STATE_TAX` (AB 12%/8%, SK 10%/7%, BC 9%/6% of oil/gas revenue),
+`STATE_CAPEX_MM` in US$ (AB 6.5, SK 3.0, BC 7.5) and `STATE_DIFF` price bases (light oil −$8 to −$9 vs WTI,
+gas −$1.50 to −$1.75 vs Henry Hub). Heavy-oil wells should be run with `--oil-diff` near the current
+WCS−WTI differential (ticker and indicators tab). All cash flows are in US$.
+
 ## Forecast: `ogdata forecast`
 
 ```

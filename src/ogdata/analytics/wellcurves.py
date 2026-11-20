@@ -51,7 +51,7 @@ WITH direct AS (
            string_agg(DISTINCT formation, '|' ORDER BY formation) AS formation,
            'direct' AS alloc, 1 AS n_wells, any_value(source) AS source
     FROM production_monthly
-    WHERE entity_type IN ('well', 'well_formation') AND api10 IS NOT NULL AND coalesce(period_months, 1) = 1
+    WHERE entity_type IN ('well', 'well_formation') AND api10 IS NOT NULL AND coalesce(period_months, 1) = 1 AND state = '{st}'
     GROUP BY api10, state, period
 ),
 tx_members AS (
@@ -88,9 +88,15 @@ ks_alloc AS (
     WHERE p.state = 'KS' AND p.entity_type = 'lease' AND coalesce(p.period_months, 1) = 1
 )
 SELECT * FROM direct
-UNION ALL SELECT * FROM tx_alloc
-UNION ALL SELECT * FROM ks_alloc
+{tx_union}
+{ks_union}
 """
+
+
+def well_monthly_sql(st: str) -> str:
+    """WELL_MONTHLY_SQL restricted to one state (the lease allocations only apply to TX / KS)."""
+    return WELL_MONTHLY_SQL.format(st=st, tx_union="UNION ALL SELECT * FROM tx_alloc" if st == "TX" else "",
+                                   ks_union="UNION ALL SELECT * FROM ks_alloc" if st == "KS" else "")
 
 
 def build_well_monthly(con: duckdb.DuckDBPyConnection) -> None:
@@ -101,19 +107,21 @@ def build_well_monthly(con: duckdb.DuckDBPyConnection) -> None:
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
-    con.execute(f"CREATE OR REPLACE TEMP TABLE wm AS {WELL_MONTHLY_SQL}")
-    # a wellbore can be reported under two entity rows in the same month (e.g. TX gas well + oil lease); keep one row
-    con.execute("""
-        CREATE OR REPLACE TEMP TABLE wm2 AS
-        SELECT api10, state, period, sum(oil_bbl) oil_bbl, sum(gas_mcf) gas_mcf, sum(water_bbl) water_bbl, max(days_on) days_on,
-               any_value(operator) operator, any_value(county) county, any_value(formation) formation,
-               min(alloc) alloc, max(n_wells) n_wells, any_value(source) source
-        FROM wm GROUP BY api10, state, period
-    """)
-    states = [r[0] for r in con.execute("SELECT DISTINCT state FROM wm2 ORDER BY 1").fetchall()]
+    states = [r[0] for r in con.execute("""
+        SELECT DISTINCT state FROM production_monthly
+        WHERE state IS NOT NULL AND coalesce(period_months, 1) = 1
+          AND (entity_type IN ('well', 'well_formation') AND api10 IS NOT NULL OR state IN ('TX', 'KS') AND entity_type = 'lease')
+        ORDER BY 1""").fetchall()]
+    # one state at a time, streamed straight to parquet: materialising the whole country in one temp table
+    # needs more than 10 GB once Canada is included. A wellbore can be reported under two entity rows in the
+    # same month (e.g. TX gas well + oil lease); the GROUP BY keeps one row.
     for st in states:
-        _copy(con, f"SELECT * FROM wm2 WHERE state = '{st}' ORDER BY api10, period", stage / f"state={st}.parquet")
-    con.execute("DROP TABLE wm; DROP TABLE wm2")
+        _copy(con, f"""
+            SELECT api10, state, period, sum(oil_bbl) oil_bbl, sum(gas_mcf) gas_mcf, sum(water_bbl) water_bbl, max(days_on) days_on,
+                   any_value(operator) operator, any_value(county) county, any_value(formation) formation,
+                   min(alloc) alloc, max(n_wells) n_wells, any_value(source) source
+            FROM ({well_monthly_sql(st)}) wm GROUP BY api10, state, period ORDER BY api10, period
+        """, stage / f"state={st}.parquet")
     if out.exists():
         shutil.rmtree(out)
     stage.rename(out)
@@ -221,6 +229,13 @@ def build_well_decline(con: duckdb.DuckDBPyConnection) -> None:
         con.execute(f"CREATE OR REPLACE TEMP TABLE wm_state AS SELECT * FROM read_parquet('{ADIR / 'well_monthly' / f'state={st}.parquet'}')")
         n_wells = con.execute("SELECT count(DISTINCT api10) FROM wm_state").fetchone()[0]
         max_period = con.execute("SELECT max(period) FROM wm_state").fetchone()[0]
+        min_period = con.execute("SELECT min(period) FROM wm_state").fetchone()[0]
+        # wells drilled before the state's published history begins (WV 1985, Petrinex 2022, ...): their first
+        # observed month is not their first production month, so vintage comes from the well file instead and
+        # they are kept out of type curves / analogs (history_truncated).
+        ref = con.execute("""SELECT api10, min(coalesce(first_prod_date, spud_date, completion_date)) AS ref_date,
+                                    any_value(formation) FILTER (WHERE formation IS NOT NULL AND formation <> '') AS well_formation
+                             FROM wells WHERE state = ? AND api10 IS NOT NULL GROUP BY 1""", [st]).df()
         for lo in range(0, n_wells, CHUNK):
             wells, oil, gas = _state_arrays(con, st, lo, lo + CHUNK)
             if wells.empty:
@@ -234,6 +249,17 @@ def build_well_decline(con: duckdb.DuckDBPyConnection) -> None:
             df["boe_eur"] = df["oil_eur"].fillna(df["oil_cum"]) + df["gas_eur"].fillna(df["gas_cum"]) / 6
             df["primary_product"] = np.where(df["oil_cum"] >= df["gas_cum"] / 6, "oil", "gas")
             df["vintage"] = pd.to_datetime(df["first_prod"]).dt.year
+            df = df.merge(ref, on="api10", how="left")
+            fp = pd.to_datetime(df["first_prod"]); rd = pd.to_datetime(df["ref_date"])
+            # truncated if the well file dates it well before its first observed month (shut-in or pre-history),
+            # or if it has no well-file date at all and appears in the first quarter of the published history
+            trunc = (rd < fp - pd.DateOffset(months=6)) | (rd.isna() & (fp <= pd.Timestamp(min_period) + pd.DateOffset(months=3)))
+            df["history_truncated"] = trunc.fillna(False).astype(bool)
+            has_rd = df.history_truncated & rd.notna()
+            df.loc[has_rd, "vintage"] = rd[has_rd].dt.year
+            # production files without a formation (Petrinex) fall back to the well file's pool / formation
+            df["formation"] = df["formation"].where(df["formation"].notna() & (df["formation"] != ""), df["well_formation"])
+            df = df.drop(columns=["ref_date", "well_formation"])
             df["status"] = np.where(pd.to_datetime(df["last_prod"]) >= pd.Timestamp(max_period) - pd.DateOffset(months=3), "active", "inactive")
             df["state_max_period"] = pd.Timestamp(max_period)
             frames.append(df)
@@ -262,7 +288,7 @@ def build_type_curves(con: duckdb.DuckDBPyConnection) -> None:
             SELECT dense_rank() OVER (ORDER BY m.api10)::INTEGER AS wid, m.state, d.county, d.formation, {VINTAGE_SQL} AS vintage_bucket,
                    datediff('month', d.first_prod, m.period)::SMALLINT AS t, m.oil_bbl::FLOAT AS oil_bbl, m.gas_mcf::FLOAT AS gas_mcf
             FROM _wm m JOIN _wd d USING (api10, state)
-            WHERE d.vintage >= 2005 AND d.alloc <> 'lease_alloc' AND m.period >= d.first_prod AND datediff('month', d.first_prod, m.period) < 120
+            WHERE d.vintage >= 2005 AND d.alloc <> 'lease_alloc' AND NOT d.history_truncated AND m.period >= d.first_prod AND datediff('month', d.first_prod, m.period) < 120
         ) TO '{stage}' (FORMAT PARQUET, COMPRESSION ZSTD)
     """)
     con.execute(f"CREATE OR REPLACE VIEW norm AS SELECT * FROM read_parquet('{stage}')")
@@ -279,19 +305,23 @@ def build_type_curves(con: duckdb.DuckDBPyConnection) -> None:
     parts_dir.mkdir(parents=True, exist_ok=True)
     for old in parts_dir.glob("*.parquet"):
         old.unlink()
+    # one (state, grouping, vintage) aggregation at a time: the whole table at once exceeds the memory limit
+    # (count(DISTINCT wid) hash sets + t-digests per group) once Canada is included.
+    states = [r[0] for r in con.execute("SELECT DISTINCT state FROM norm ORDER BY 1").fetchall()]
     i = 0
-    for gtype, key, filt in (("state", "NULL", ""), ("state_county", "county", "JOIN keep_ct USING (state, county)"), ("state_formation", "formation", "JOIN keep_fm USING (state, formation)")):
-        for vint in ("vintage_bucket", "'all'"):
-            i += 1
-            sql = f"""
-                SELECT '{gtype}' AS group_type, state, {key}::VARCHAR AS key, {vint} AS vintage, t,
-                       count(*) AS n, count(DISTINCT wid) AS n_wells,
-                       approx_quantile(oil_bbl, 0.1) oil_p10, approx_quantile(oil_bbl, 0.5) oil_p50, approx_quantile(oil_bbl, 0.9) oil_p90, avg(oil_bbl) oil_mean,
-                       approx_quantile(gas_mcf, 0.1) gas_p10, approx_quantile(gas_mcf, 0.5) gas_p50, approx_quantile(gas_mcf, 0.9) gas_p90, avg(gas_mcf) gas_mean
-                FROM norm {filt}
-                GROUP BY ALL HAVING count(DISTINCT wid) >= 10
-            """
-            _copy(con, sql, parts_dir / f"part{i}.parquet")
+    for st in states:
+        for gtype, key, filt in (("state", "NULL", ""), ("state_county", "county", "JOIN keep_ct USING (state, county)"), ("state_formation", "formation", "JOIN keep_fm USING (state, formation)")):
+            for vint in ("vintage_bucket", "'all'"):
+                i += 1
+                sql = f"""
+                    SELECT '{gtype}' AS group_type, state, {key}::VARCHAR AS key, {vint} AS vintage, t,
+                           count(*) AS n, count(DISTINCT wid) AS n_wells,
+                           approx_quantile(oil_bbl, 0.1) oil_p10, approx_quantile(oil_bbl, 0.5) oil_p50, approx_quantile(oil_bbl, 0.9) oil_p90, avg(oil_bbl) oil_mean,
+                           approx_quantile(gas_mcf, 0.1) gas_p10, approx_quantile(gas_mcf, 0.5) gas_p50, approx_quantile(gas_mcf, 0.9) gas_p90, avg(gas_mcf) gas_mean
+                    FROM norm {filt} WHERE state = '{st}'
+                    GROUP BY ALL HAVING count(DISTINCT wid) >= 10
+                """
+                _copy(con, sql, parts_dir / f"part{i:03d}.parquet")
     _copy(con, f"SELECT * FROM read_parquet('{parts_dir}/*.parquet') ORDER BY group_type, state, key, vintage, t", out)
     for old in parts_dir.glob("*.parquet"):
         old.unlink()
