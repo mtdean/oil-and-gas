@@ -1,8 +1,10 @@
 """Pennsylvania DEP — well production extracts (monthly unconventional 2015+, semiannual 2010-2014, annual conventional 1980+).
 
 Scripted via the Greenport ReportExtracts form: GET the form for an anti-forgery
-token + the list of reporting periods, POST period ids (<=13 per request), get CSV.
-The server intermittently answers 400 — we re-GET the token and retry.
+token + the list of reporting periods, POST a period id, get CSV.
+The server often answers 400. We deliberately go easy on it: one attempt per period
+per run, 5 s between requests, at most 15 new periods per run, and we stop for the
+run after 3 consecutive failures; missing periods are picked up by later daily runs.
 Rows carry lat/lon, so wells are derived from production. period_months marks 1/6/12-month periods.
 """
 from __future__ import annotations
@@ -52,7 +54,12 @@ class Pennsylvania(Source):
     granularity = "well"
     history = "1980 (annual), 2010 (semiannual), 2015-01 (monthly)"
     has_latlon = True
-    notes = "Greenport export often answers 400; periods that fail are skipped and retried on later runs, so history fills in gradually."
+    notes = ("Greenport export often answers 400. Low-touch: 1 attempt per period, 5 s apart, <=15 new periods per run, "
+             "back off for the run after 3 consecutive failures; missing periods fill in over later daily runs.")
+    MAX_NEW_PERIODS = 15      # new/unsettled periods requested per run
+    MAX_CONSECUTIVE_FAIL = 3  # stop requesting periods for this run after this many failures in a row
+    PAUSE_S = 5               # between period requests
+    INVENTORY_DAYS = 14
 
     def _token(self, ctx, url):
         for attempt in range(5):
@@ -65,34 +72,30 @@ class Pennsylvania(Source):
         raise RuntimeError(f"no anti-forgery token from {url}")
 
     def _post(self, ctx, form_url, export_url, data: list[tuple[str, str]], dest: Path) -> bool | None:
-        """Returns True if dest changed, False if unchanged, None if the server kept refusing.
+        """Returns True if dest changed, False if unchanged, None if the server refused.
 
-        Greenport is load-balanced and its anti-forgery check fails when the cookie and
-        token come from different backends, so every attempt uses a brand-new session:
-        GET the form (cookie + token), then POST immediately with that same session.
+        One attempt only. Greenport is load-balanced and its anti-forgery check fails when
+        the cookie and token come from different backends, so the GET (cookie + token) and
+        the POST use one fresh session. A refusal is left for the next daily run.
         """
         import requests
         from ..http import UA
-        status = None
-        for attempt in range(3):
-            s = requests.Session()
-            s.headers["User-Agent"] = UA
-            try:
-                g = s.get(form_url, timeout=60)
-                m = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', g.text) or re.search(r'value="([^"]+)"[^>]*name="__RequestVerificationToken"', g.text)
-                if not m:
-                    raise RuntimeError("no token")
-                r = s.post(export_url, data=data + [("__RequestVerificationToken", m.group(1))], headers={"Referer": form_url}, timeout=900)
-                status = r.status_code
-                if r.status_code == 200 and r.content[:1] != b"<":
-                    old = dest.read_bytes() if dest.exists() else None
-                    dest.write_bytes(r.content)
-                    return old != r.content
-            except (requests.RequestException, RuntimeError) as e:
-                status = str(e)
-            self.log.warning("PA export %s -> %s (attempt %d)", dest.name, status, attempt + 1)
-            time.sleep(min(4 * (attempt + 1), 30))
-        self.log.warning("PA export %s skipped this run (persistent %s); will retry next update", dest.name, status)
+        s = requests.Session()
+        s.headers["User-Agent"] = UA
+        try:
+            g = s.get(form_url, timeout=60)
+            m = re.search(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"', g.text) or re.search(r'value="([^"]+)"[^>]*name="__RequestVerificationToken"', g.text)
+            if not m:
+                raise RuntimeError("no token")
+            r = s.post(export_url, data=data + [("__RequestVerificationToken", m.group(1))], headers={"Referer": form_url}, timeout=900)
+            status = r.status_code
+            if r.status_code == 200 and r.content[:1] != b"<":
+                old = dest.read_bytes() if dest.exists() else None
+                dest.write_bytes(r.content)
+                return old != r.content
+        except (requests.RequestException, RuntimeError) as e:
+            status = str(e)
+        self.log.warning("PA export %s -> %s; skipped this run, will retry next update", dest.name, status)
         return None
 
     def fetch(self, ctx: RunContext) -> list[Path]:
@@ -109,6 +112,7 @@ class Pennsylvania(Source):
                 periods.append((int(pid), label.strip(), parsed[0], parsed[1]))
         (self.raw / "periods.json").write_text(json.dumps([{"id": p, "label": l, "start": s.isoformat(), "months": m} for p, l, s, m in periods], indent=1))
         today = date.today()
+        requested = fails = 0
         for pid, label, start, months in periods:
             if ctx.limit_years and start.year < today.year - ctx.limit_years:
                 continue
@@ -116,12 +120,26 @@ class Pennsylvania(Source):
             end_age_months = (today.year - start.year) * 12 + today.month - start.month - months
             if dest.exists() and not ctx.force and end_age_months > 24:
                 continue  # settled history
-            if self._post(ctx, FORM, EXPORT, [("RptPeriodsid", str(pid))], dest):
+            if requested >= self.MAX_NEW_PERIODS:
+                self.log.info("PA: reached %d period requests this run; remaining periods wait for the next daily run", self.MAX_NEW_PERIODS)
+                break
+            if requested:
+                time.sleep(self.PAUSE_S)
+            requested += 1
+            got = self._post(ctx, FORM, EXPORT, [("RptPeriodsid", str(pid))], dest)
+            if got is None:
+                fails += 1
+                if fails >= self.MAX_CONSECUTIVE_FAIL:
+                    self.log.warning("PA: %d consecutive refusals; backing off until the next daily run", fails)
+                    break
+                continue
+            fails = 0
+            if got:
                 changed.append(dest)
-            time.sleep(1)
         for flag in ("Y", "N"):
             dest = self.raw / f"inventory_{flag}.csv"
-            if ctx.force or not dest.exists() or (time.time() - dest.stat().st_mtime) > 6 * 86400:
+            if ctx.force or not dest.exists() or (time.time() - dest.stat().st_mtime) > self.INVENTORY_DAYS * 86400:
+                time.sleep(self.PAUSE_S)
                 if self._post(ctx, INV_FORM, INV_EXPORT, [("Operator", "-1"), ("Unconvid", flag)], dest):
                     changed.append(dest)
         return changed

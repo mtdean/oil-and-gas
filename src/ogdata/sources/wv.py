@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import time
 import zipfile
@@ -18,6 +19,26 @@ from .base import Frame, RunContext, Source
 PAGE = "https://dep.wv.gov/oil-and-gas/databaseinfo/Pages/default.aspx"
 WELLS_LAYER = "https://tagis.dep.wv.gov/arcgis/rest/services/WVDEP_enterprise/oil_gas/MapServer/7/query"
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+_XLRD_PATCHED = False
+
+
+def _patch_xlrd():
+    """WV DEP's 1985-2006 files are Excel 4.0 (BIFF4) worksheets with >16384 rows.
+    xlrd caps BIFF<8 sheets at Excel 4's 16384-row limit and asserts when a cell
+    lands beyond it, so lift the cap to the 16-bit row index the records actually use."""
+    global _XLRD_PATCHED
+    if _XLRD_PATCHED:
+        return
+    import xlrd.sheet
+    orig = xlrd.sheet.Sheet.__init__
+
+    def init(self, *a, **k):
+        orig(self, *a, **k)
+        self.utter_max_rows = 65536
+
+    xlrd.sheet.Sheet.__init__ = init
+    _XLRD_PATCHED = True
 
 
 class WestVirginia(Source):
@@ -88,12 +109,21 @@ class WestVirginia(Source):
             if path.suffix.lower() == ".zip":
                 with zipfile.ZipFile(path) as z:
                     name = next(n for n in z.namelist() if re.search(r"\.xlsx?$", n, re.I))
-                    data = z.read(name)
-                    return pd.read_excel(io.BytesIO(data), dtype=str, engine="calamine" if name.lower().endswith("x") else "xlrd")
-            return pd.read_excel(path, dtype=str, engine="calamine" if path.suffix.lower() == ".xlsx" else "xlrd")
+                    return self._read_excel(io.BytesIO(z.read(name)), name)
+            return self._read_excel(path, path.name)
         except Exception as e:
             self.log.warning("cannot read %s: %r", path.name, e)
             return None
+
+    def _read_excel(self, src, name: str) -> pd.DataFrame:
+        if name.lower().endswith("x"):
+            return pd.read_excel(src, dtype=str, engine="calamine")
+        _patch_xlrd()
+        import xlrd
+        with open(os.devnull, "w") as devnull:
+            kw = {"file_contents": src.getvalue()} if isinstance(src, io.BytesIO) else {"filename": str(src)}
+            book = xlrd.open_workbook(logfile=devnull, **kw)
+        return pd.read_excel(book, dtype=str, engine="xlrd")
 
     def _prod(self, path: Path) -> pd.DataFrame:
         raw = self._read(path)

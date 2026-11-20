@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from .sources.base import Source
-from .sources import nd, tx, nm, co, wy, ut, mt, pa, oh, wv, ks, ok, la, ca, bsee, fracfocus
+from .sources import nd, tx, nm, co, wy, ut, mt, pa, oh, wv, ks, ok, la, ca, ak, bsee, fracfocus
 from .sources import eia_bulk, eia, fred, cftc, bakerhughes, onrr, dallasfed
 
 _CLASSES: list[type[Source]] = [
     # well-level / entity-level production + locations (ordered roughly by production volume)
     tx.Texas, nm.NewMexico, nd.NorthDakota, co.Colorado, ok.Oklahoma, wy.Wyoming, pa.Pennsylvania, la.Louisiana,
-    ut.Utah, oh.Ohio, wv.WestVirginia, mt.Montana, ks.Kansas, ca.California, bsee.BSEE, fracfocus.FracFocus,
+    ut.Utah, oh.Ohio, wv.WestVirginia, mt.Montana, ks.Kansas, ca.California, ak.Alaska, bsee.BSEE, fracfocus.FracFocus,
     # macro
     eia_bulk.EIABulk, eia.EIA, fred.FRED, cftc.CFTC, bakerhughes.BakerHughes, onrr.ONRR, dallasfed.DallasFed,
 ]

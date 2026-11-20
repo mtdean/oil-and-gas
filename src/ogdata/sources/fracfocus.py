@@ -1,6 +1,9 @@
 """FracFocus national hydraulic fracturing registry — one row per disclosure (frac job), 2011+, with lat/lon.
 
 Download: https://www.fracfocusdata.org/digitaldownload/FracFocusCSV.zip (~450 MB, refreshed 5x/week).
+As of 2026-11-19 the host resets the connection for requests from this machine (an
+IP-level block / WAF; it answers from other networks). We make one attempt per run (retries=0) and
+fall back to a zip downloaded by hand into data/raw/fracfocus/FracFocusCSV.zip.
 We load DisclosureList_1.csv into `completions` and derive a `wells` row per API14
 (location fallback for states without good coordinates). The chemical registry
 tables are left in the raw zip.
@@ -35,8 +38,19 @@ class FracFocus(Source):
     history = "2011"
     has_latlon = True
 
+    MANUAL = "download FracFocusCSV.zip in a browser from https://fracfocus.org/data-download and drop it at data/raw/fracfocus/FracFocusCSV.zip"
+
     def fetch(self, ctx: RunContext) -> list[Path]:
-        f = download(URL, self.raw / "FracFocusCSV.zip", sess=ctx.sess, force=ctx.force, max_age_hours=20)
+        import requests
+        dest = self.raw / "FracFocusCSV.zip"
+        try:
+            f = download(URL, dest, sess=ctx.sess, force=ctx.force, max_age_hours=20, retries=0)
+        except (requests.RequestException, ConnectionResetError, OSError) as e:
+            if dest.exists():
+                self.log.warning("fracfocus: download failed (%s); using existing %s. Manual refresh: %s", e, dest.name, self.MANUAL)
+                return []
+            self.log.warning("fracfocus: download failed (%s) and no local zip. %s", e, self.MANUAL)
+            raise
         return [f.path] if f.changed else []
 
     def transform(self, ctx: RunContext, changed: list[Path] | None) -> Iterator[Frame]:

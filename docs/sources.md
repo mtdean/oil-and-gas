@@ -47,10 +47,11 @@ All URLs were tested on 2026-11-19. Sizes are download sizes.
 * `https://bogfiles.dnrc.mt.gov/Reporting/Wells/MT_CompleteWellList.zip` (42k wells, lat/lon, spud/completion, TD). Monthly delta: `Reporting/MonthlyUpdates/MT_MonthlyUpdate.zip`.
 * Index pages use backslashes in hrefs; files are on `bogfiles.dnrc.mt.gov`.
 
-### Pennsylvania — DEP (`pa`, active)
-* Form https://greenport.pa.gov/ReportExtracts/OG/OilGasWellProdReport → POST `ExportOGProdReport` with `RptPeriodsid` (≤13 per request) + anti-forgery token → CSV with **lat/lon**.
-  Monthly unconventional 2015-01+, semiannual 2010–2014, annual conventional 1980+. Server intermittently returns 400 → re-GET token and retry (built in).
-* Well inventory: POST `WellIvventoryExport` (sic) with `Operator=-1&Unconvid=Y|N`.
+### Pennsylvania — DEP (`pa`, active, deliberately low-touch)
+* Form https://greenport.pa.gov/ReportExtracts/OG/OilGasWellProdReport → POST `ExportOGProdReport` with `RptPeriodsid` (one period per request) + anti-forgery token (fresh session per request) → CSV with **lat/lon**.
+  Monthly unconventional 2015-01+, semiannual 2010–2014, annual conventional 1980+.
+* The server answers 400 for many requests. To avoid hammering it the connector makes **one attempt per period per run, 5 s apart, at most 15 new periods per run, and stops for the run after 3 consecutive refusals**. Periods already on disk whose end is >24 months old are never re-requested. Missing periods fill in over the daily runs (as of 2026-11-19: 45 of 197 periods loaded).
+* Well inventory: POST `WellIvventoryExport` (sic) with `Operator=-1&Unconvid=Y|N`, refreshed every 14 days.
 * Dictionary: https://files.dep.state.pa.us/OilGas/BOGM/BOGMPortalFiles/OilGasReports/HelpDocs/SSRS_Report_Data_Dictionary/DEP_Oil_and_GAS_Reports_Data_Dictionary.pdf
 
 ### Ohio — ODNR (`oh`, active, URL list maintained by hand)
@@ -86,9 +87,10 @@ All URLs were tested on 2026-11-19. Sizes are download sizes.
 * Production: well-level monthly files 1977–2021 exist at https://filerequest.conservation.ca.gov/?q=production_injection_data but are **emailed on request**
   (name + email form). 2022+ only in the WellSTAR Power BI dashboard. Not automated.
 
-### Alaska — AOGCC (planned)
-* Daily Access extract https://aogcccdnstorage.blob.core.windows.net/webextract/AOGCC_DataExtract.zip (39 MB .mdb; needs `mdbtools`). Data Miner UI (HTTP only) has well-level monthly production.
-  Main site is behind DataDome.
+### Alaska — AOGCC (`ak`, manual)
+* Both entry points refuse scripted clients (checked 2026-11-19): https://www.commerce.alaska.gov/web/aogcc/Data → HTTP 403 for non-browser clients (also from other networks); Data Miner https://aogweb.state.ak.us/DataMiner3/ → connection reset. Not worked around.
+* Manual: in a browser open Data Miner → **Production** page → `CSV Production` button (no filters) → save as `data/raw/ak/production.csv`; **Well info** page → CSV export → `data/raw/ak/wells.csv`. Then `ogdata update ak --transform-only`. Columns are matched fuzzily and logged; parser is untested until real exports are present. Production is well-level monthly back to 1958, APIs are 14-digit (prefix 50).
+* The daily Access extract https://aogcccdnstorage.blob.core.windows.net/webextract/AOGCC_DataExtract.zip (39 MB .mdb, needs `mdbtools`) is an alternative if it becomes reachable.
 
 ### Other states (planned, lower priority)
 Arkansas (AOGC), Mississippi (MSOGB), Alabama (GSA/SOGB), Michigan (EGLE), Illinois (ISGS), Kentucky (KGS), Nebraska (NOGCC), Virginia (DMME), New York (DEC), Nevada, South Dakota.
@@ -104,8 +106,10 @@ Arkansas (AOGC), Mississippi (MSOGB), Alabama (GSA/SOGB), Michigan (EGLE), Illin
 ### ONRR (`onrr`, active)
 * https://revenuedata.onrr.gov/downloads/monthly_production.csv (national federal/Native American by commodity, 2003+) and `calendar_year_production.csv` (state/county).
 
-### FracFocus (`fracfocus`, active)
+### FracFocus (`fracfocus`, active — blocked from this IP as of 2026-11-19)
 * https://www.fracfocusdata.org/digitaldownload/FracFocusCSV.zip (444 MB, 5×/week; `www.` required). `DisclosureList_1.csv` → completions; registry CSVs (chemicals) left raw.
+* The host completes the TLS handshake and then resets the connection for every request from this machine (curl and requests, HTTP/1.1 and HTTP/2) while answering 200 from other networks: an IP-level block or WAF. We do not evade it. The daily job makes **one** attempt; if it fails and a zip is already on disk that zip is used.
+* Manual drop-in works: download `FracFocusCSV.zip` in a browser from https://fracfocus.org/data-download, save as `data/raw/fracfocus/FracFocusCSV.zip`, run `ogdata update fracfocus --transform-only`.
 
 ## Macro
 
