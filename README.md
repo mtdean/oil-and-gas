@@ -76,6 +76,17 @@ lease→API membership so volumes can be allocated (by well count, by gas-well t
 rates, or by FracFocus completion intensity) downstream. Gas wells in Texas are
 one well per "lease" and are joined to their API directly.
 
+## Canada
+
+Alberta (`ab`), Saskatchewan (`sk`) and British Columbia (`bc`) load alongside the US states. Wells are keyed
+by the 16-character UWI (stored in `api10`), the province code is the `state`, and metric volumes are converted
+to bbl/mcf (condensate counted as oil). Alberta and Saskatchewan well-level production comes from the public
+Petrinex extracts and **starts 2022-01** (earlier history is a paid product in both provinces); BC's regulator
+publishes the full history from 1954. Wells drilled before a province's (or state's) published history starts
+are flagged `history_truncated` in `well_decline`, take their vintage from the well file, and are excluded from
+type curves and analog searches. Crown royalties replace severance taxes and Canadian differentials
+(MSW/WCS vs WTI, AECO vs Henry Hub) are the default price basis in the economics. See docs/sources.md.
+
 ## Macro coverage
 
 * **EIA bulk** (no key): WTI/Brent/Henry Hub daily spot; crude & gas production by state
@@ -89,6 +100,31 @@ one well per "lease" and are joined to their API directly.
 * **FRED** (free key): WTI/Brent/HH mirrors, Treasuries, **HY and CCC OAS**, dollar index,
   oil & gas PPI and employment.
 * **Baker Hughes** weekly rigs by state/basin/trajectory: manual xlsx drop-in (site blocks scripts).
+* **Canada** (`camacro`): WCS and WTI monthly, WCS−WTI differential, Alberta gas reference price (Alberta Economic Dashboard).
+
+## Handing this off / rebuilding on another machine
+
+`AGENTS.md` is the playbook for a coding agent (or a person) taking this over: setup, the full rebuild
+order with timings, which sources refuse automation and what to drop in manually, data semantics that are
+easy to get wrong, verification queries and troubleshooting. `CLAUDE.md` repeats the non-negotiables.
+
+```bash
+git clone <repo> && cd oil-and-gas
+./scripts/rebuild_all.sh        # venv, .env, every source, views, analytics, dashboard (~2-3 h, resumable)
+.venv/bin/ogdata check          # what is missing: keys, manual drop-ins, errored sources
+```
+
+Sources that cannot be automated and need a file dropped in by hand (details in `AGENTS.md` §6):
+
+| Source | Why | Drop in |
+|---|---|---|
+| Alaska (`ak`) | AOGCC refuses all scripted access; data only behind the interactive Data Miner, no bulk file | Data Miner Production + Wells CSV exports → `data/raw/ak/` (parser untested on real files) |
+| FracFocus | resets connections from some IPs | `FracFocusCSV.zip` → `data/raw/fracfocus/` |
+| Baker Hughes | blocks scripts | rig count xlsx → `data/raw/bakerhughes/` |
+| AER ST37 (Alberta wells) | `static.aer.ca` returned 403 to the pipeline | `ST_37_Excel.zip` → `data/raw/ab/` |
+| Oklahoma, Louisiana | production is request-form / paid subscription; owner handles separately | — |
+
+Never spoof browser headers or otherwise evade a bot wall to get around these.
 
 ## Scheduling
 

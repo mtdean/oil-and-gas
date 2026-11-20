@@ -100,6 +100,61 @@ def _build_views_retry(tries: int = 6) -> None:
             time.sleep(5 * (i + 1))
 
 
+MANUAL_DROPINS = [
+    ("fracfocus", "data/raw/fracfocus/FracFocusCSV.zip", "FracFocus bulk CSV zip (site resets connections from some IPs)"),
+    ("bakerhughes", "data/raw/bakerhughes/current_report.xlsx", "Baker Hughes rig count xlsx (site blocks scripts)"),
+    ("ak", "data/raw/ak/production*.csv", "AOGCC Data Miner production export (no bulk download exists)"),
+    ("ak", "data/raw/ak/wells*.csv", "AOGCC Data Miner wells export"),
+    ("ab", "data/raw/ab/ST_37_Excel.zip", "AER ST37 well list (static.aer.ca may 403; connector falls back to this file)"),
+]
+
+
+def cmd_check(args):
+    """Preflight for a (re)build: environment, keys, manual drop-ins, limits, last run per source."""
+    import json
+    import os
+    import shutil
+    from .paths import DATA, RAW, ROOT, RUNS
+    ok = True
+    print(f"root      {ROOT}\ndata      {DATA}  (set OGDATA_DATA in .env to move it)")
+    free = shutil.disk_usage(DATA if DATA.exists() else ROOT).free / 1e9
+    print(f"disk free {free:,.0f} GB" + ("" if free > 20 else "   <-- need ~20 GB for a full rebuild"))
+    try:
+        import resource
+        soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+        print(f"fd limit  {soft}" + ("" if soft >= 4096 else "   <-- too low for DuckDB over many parquet files; paths.raise_fd_limit() should have raised it"))
+    except ImportError:
+        pass
+    print(f"env file  {'present' if (ROOT / '.env').exists() else 'MISSING (cp .env.example .env)'}")
+    for k, why in (("FRED_API_KEY", "credit spreads, PPIs on the dashboard"), ("EIA_API_KEY", "optional; EIA bulk files cover the dashboard")):
+        print(f"  {k:14s} {'set' if os.environ.get(k) else 'not set'}   ({why})")
+    print("manual drop-ins (see AGENTS.md section 6):")
+    for src, pattern, why in MANUAL_DROPINS:
+        path = ROOT / pattern
+        have = list(path.parent.glob(path.name)) if path.parent.exists() else []
+        print(f"  {'ok     ' if have else 'missing'} {pattern:45s} {src}: {why}")
+    last = {}
+    if RUNS.exists():
+        for line in RUNS.open():
+            try:
+                r = json.loads(line); last[r["source"]] = r
+            except json.JSONDecodeError:
+                continue
+    print("sources (last run):")
+    for s_ in registry.all_sources():
+        r = last.get(s_.name)
+        state = f"{r['status']:10s} rows={r.get('rows', 0):>11,}  {r['ts'][:16]}" if r else "never run"
+        flag = "" if (not r or r["status"] != "error") else f"   <-- {str(r.get('error', ''))[:80]}"
+        print(f"  {s_.name:11s} {s_.status:7s} {state}{flag}")
+        if r and r["status"] == "error":
+            ok = False
+    adir = DATA / "parquet" / "analytics"
+    have = sorted(p.name for p in adir.glob("*.parquet")) if adir.exists() else []
+    wm = adir / "well_monthly"
+    print(f"analytics  {', '.join(have) or 'not built'}; well_monthly states: {len(list(wm.glob('*.parquet'))) if wm.exists() else 0}")
+    print("next: ./scripts/rebuild_all.sh for a full rebuild, or ogdata update <source> for one source." if not have else "ok" if ok else "some sources errored: see logs/ogdata-*.log")
+
+
 def cmd_status(args):
     df = storage.table_stats()
     if df.empty:
@@ -127,6 +182,7 @@ def main(argv=None):
     p.add_argument("-v", "--verbose", action="store_true")
     sp = p.add_subparsers(dest="cmd", required=True)
 
+    sp.add_parser("check", help="preflight: env, keys, manual drop-ins, last run per source").set_defaults(fn=cmd_check)
     sp.add_parser("list", help="list data sources").set_defaults(fn=cmd_list)
 
     u = sp.add_parser("update", help="fetch + transform sources (default: all active)")
