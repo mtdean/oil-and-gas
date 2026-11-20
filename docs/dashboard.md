@@ -70,6 +70,9 @@ Code: `dashboard.ticker()`; `_latest()` picks the last non-null observation and 
 | PDP PV10 | `well_value.pv10_usd` | cell sum |
 | Next-12m cash flow | `well_value.cf_next12_usd` | cell sum |
 | Current rate | `oil_rate_bpd + gas_rate_mcfd / 6` from the last three producing months | cell sum |
+| Oil rate / Gas rate | `oil_rate_bpd`, `gas_rate_mcfd` | cell sum |
+| PV10, oil wells / PV10, gas wells | `pv10_usd` split by `primary_product` (oil if cumulative oil ≥ gas/6) | cell sum |
+| Oil share of active wells | active oil wells ÷ (oil + gas): blue = gas, grey = mixed, amber = oil | cell share |
 | Wells / wells 2015+ | counts from `well_decline` | cell sum |
 | Median 12-mo oil per well, 2018+ | `oil_cum12` of oil wells, vintage ≥ 2018, direct-reported only | cell median |
 | Median oil / gas EUR per well, 2018+ | `oil_eur` / `gas_eur` from each well's own Arps fit | cell median |
@@ -77,6 +80,10 @@ Code: `dashboard.ticker()`; `_latest()` picks the last non-null observation and 
 
   Colour is a log (for sums) or linear (for medians) ramp clipped at the 5th–97th percentile of the visible cells.
   Hover shows county, every metric and the active-well count.
+![oil share](img/dashboard-map-oilshare.png)
+
+  *Oil share of active wells: blue gas, amber oil.*
+
 * **Base map**: lower-48 states (us-atlas 10m) and Canadian provinces (Natural Earth 50m) on one Albers projection.
 * **Layers**: *basins* = EIA sedimentary basins plus the Western Canada Sedimentary Basin (AGS); *plays* = EIA
   tight-oil/shale-gas plays, BC unconventional play trends, Alberta shale units (AGS); *labels* toggles the names.
@@ -128,8 +135,8 @@ The "What to watch" note at the bottom is the one-paragraph reading guide for th
 
 ![value](img/dashboard-value.png)
 
-* **PDP valuation by state**: active wells, oil b/d, gas mcf/d, PV10 at bear/base/bull decks, next-12-month
-  cash flow and remaining reserves from `well_value`.
+* **PDP valuation by state**: active wells (and the oil / gas well split), oil b/d, gas mcf/d, PV10 at bear/base/bull
+  decks plus PV10 of oil wells and of gas wells separately, next-12-month cash flow and remaining reserves from `well_value`.
 * **Top operators by PDP PV10**: `well_value` grouped by the operator last reported for the well.
 
 How a `well_value` row is made (`analytics/valuation.py`): take the well's Arps fit from `well_decline`,
@@ -340,6 +347,9 @@ def hex_cells(con) -> list[dict]:
                quantile_cont(boe_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated) eur_boe,
                sum(pv10_usd) pv10, sum(cf_next12_usd) cf12, sum(oil_remaining_bbl + gas_remaining_mcf / 6) rem_boe,
                sum(oil_rate_bpd + gas_rate_mcfd / 6) boed, sum(oil_rate_bpd) bopd, sum(gas_rate_mcfd) mcfd,
+               sum(pv10_usd) FILTER (WHERE primary_product = 'oil') pv10_oil, sum(pv10_usd) FILTER (WHERE primary_product = 'gas') pv10_gas,
+               count(*) FILTER (WHERE primary_product = 'oil' AND status = 'active') n_oil, count(*) FILTER (WHERE primary_product = 'gas' AND status = 'active') n_gas,
+               sum(oil_remaining_bbl) rem_oil, sum(gas_remaining_mcf) rem_gas,
                quantile_cont(pv10_usd, 0.5) FILTER (WHERE status = 'active') pv10_med
         FROM w GROUP BY 1, 2 HAVING count(*) >= 3
     """).df()
@@ -347,7 +357,9 @@ def hex_cells(con) -> list[dict]:
     for r in df.itertuples(index=False):
         cells.append({"lat": round(r.clat, 3), "lon": round(r.clon, 3), "st": r.st, "county": r.county, "n": int(r.n), "n15": int(r.n15), "n_active": int(r.n_active), "n18": int(r.n18),
                       "cum12_oil": r.cum12_oil, "cum12_gas": r.cum12_gas, "eur_oil": r.eur_oil, "eur_gas": r.eur_gas, "eur_boe": r.eur_boe,
-                      "pv10": r.pv10, "cf12": r.cf12, "rem_boe": r.rem_boe, "boed": r.boed, "bopd": r.bopd, "mcfd": r.mcfd, "pv10_med": r.pv10_med})
+                      "pv10": r.pv10, "cf12": r.cf12, "rem_boe": r.rem_boe, "boed": r.boed, "bopd": r.bopd, "mcfd": r.mcfd, "pv10_med": r.pv10_med,
+                      "pv10_oil": r.pv10_oil, "pv10_gas": r.pv10_gas, "n_oil": int(r.n_oil), "n_gas": int(r.n_gas), "rem_oil": r.rem_oil, "rem_gas": r.rem_gas,
+                      "oil_share": (float(r.n_oil) / (r.n_oil + r.n_gas)) if (r.n_oil + r.n_gas) > 0 else None})
     return _clean(cells)
 
 
@@ -418,6 +430,8 @@ def tables(con) -> dict:
     """).df()
     totals = con.execute("""
         SELECT state, count(*) wells, sum(pv10_usd) pv10, sum(pv10_bear_usd) pv10_bear, sum(pv10_bull_usd) pv10_bull, sum(cf_next12_usd) cf12,
+               count(*) FILTER (WHERE primary_product = 'oil') oil_wells, count(*) FILTER (WHERE primary_product = 'gas') gas_wells,
+               sum(pv10_usd) FILTER (WHERE primary_product = 'oil') pv10_oil, sum(pv10_usd) FILTER (WHERE primary_product = 'gas') pv10_gas,
                sum(oil_rate_bpd) bopd, sum(gas_rate_mcfd) mcfd, sum(oil_remaining_bbl) rem_oil, sum(gas_remaining_mcf) rem_gas
         FROM well_value GROUP BY 1 ORDER BY pv10 DESC
     """).df()
@@ -541,7 +555,7 @@ Page markup and all view-specific JavaScript (hash-routed tabs, map projection a
 <script>
 /*__DATA__*/
 /*__CHARTS_JS__*/
-const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska',AB:'Alberta',SK:'Saskatchewan',BC:'British Columbia',MB:'Manitoba',SD:'South Dakota'};
+const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska',AB:'Alberta',SK:'Saskatchewan',BC:'British Columbia',MB:'Manitoba',SD:'South Dakota',NY:'New York',KY:'Kentucky'};
 const toPts = (s, parse = parseD) => s.d.map((d, i) => ({ d: parse(d), v: s.v[i] }));
 const sum = a => a.reduce((x, y) => x + (y || 0), 0);
 document.getElementById('meta').textContent = `data as of ${DATA.generated}`;
@@ -594,6 +608,11 @@ const METRICS = [
   { k: 'pv10', label: 'PDP PV10 ($)', agg: 'sum', fmt: fmt.usd, log: true },
   { k: 'cf12', label: 'Next-12m cash flow ($)', agg: 'sum', fmt: fmt.usd, log: true },
   { k: 'boed', label: 'Current rate (boe/d)', agg: 'sum', fmt: v => fmt.big(v), log: true },
+  { k: 'bopd', label: 'Oil rate (b/d)', agg: 'sum', fmt: v => fmt.big(v), log: true },
+  { k: 'mcfd', label: 'Gas rate (mcf/d)', agg: 'sum', fmt: v => fmt.big(v), log: true },
+  { k: 'pv10_oil', label: 'PV10, oil wells ($)', agg: 'sum', fmt: fmt.usd, log: true },
+  { k: 'pv10_gas', label: 'PV10, gas wells ($)', agg: 'sum', fmt: fmt.usd, log: true },
+  { k: 'oil_share', label: 'Oil share of active wells', agg: 'share', fmt: v => (v * 100).toFixed(0) + '%', diverging: true },
   { k: 'n', label: 'Wells (all vintages)', agg: 'sum', fmt: v => fmt.num(v), log: true },
   { k: 'n15', label: 'Wells, 2015+ vintage', agg: 'sum', fmt: v => fmt.num(v), log: true },
   { k: 'cum12_oil', label: 'Median 12-mo oil per well, 2018+ (bbl)', agg: 'med', fmt: v => fmt.big(v) },
@@ -632,13 +651,15 @@ RENDER.map = () => {
   }
   d3.select('#layer-seg').on('click', e => { const b = e.target.closest('button'); if (!b) return; layers[b.dataset.l] = !layers[b.dataset.l]; drawLayers(); });
   const cellPath = c => { const s = 0.2; const p = [[c.lon, c.lat], [c.lon + s, c.lat], [c.lon + s, c.lat + s], [c.lon, c.lat + s]].map(q => proj(q)); return p.some(q => !q) ? null : 'M' + p.map(q => q.join(',')).join('L') + 'Z'; };
-  function draw(key) { const m = METRICS.find(x => x.k === key); const data = DATA.hex.filter(c => c[key] != null && c[key] > 0 && cellPath(c));
-    const vals = data.map(c => c[key]).sort(d3.ascending); const lo = d3.quantile(vals, 0.05), hi = d3.quantile(vals, 0.97);
-    const color = (m.log ? d3.scaleSequentialLog() : d3.scaleSequential()).domain([Math.max(lo, 1e-9), hi]).interpolator(d3.interpolateRgb.gamma(1.6)('#3a2008', '#ffb347')).clamp(true);
+  function draw(key) { const m = METRICS.find(x => x.k === key); const data = DATA.hex.filter(c => c[key] != null && (m.diverging ? true : c[key] > 0) && cellPath(c));
+    const vals = data.map(c => c[key]).sort(d3.ascending); const lo = m.diverging ? 0 : d3.quantile(vals, 0.05), hi = m.diverging ? 1 : d3.quantile(vals, 0.97);
+    // diverging metrics (oil share): gas-dominant blue -> mixed grey -> oil-dominant amber, fixed 0..1 domain
+    const color = m.diverging ? d3.scaleLinear().domain([0, 0.5, 1]).range(['#3987e5', '#555', '#ff9900']).clamp(true)
+      : (m.log ? d3.scaleSequentialLog() : d3.scaleSequential()).domain([Math.max(lo, 1e-9), hi]).interpolator(d3.interpolateRgb.gamma(1.6)('#3a2008', '#ffb347')).clamp(true);
     cells.selectAll('path').data(data, c => c.lat + ':' + c.lon).join('path').attr('class', 'cell').attr('d', cellPath).attr('fill', c => color(c[key]))
-      .on('mousemove', (ev, c) => showTip(ev, `<div class="t">${c.county || ''}${c.county ? ', ' : ''}${c.st} · ${c.lat.toFixed(1)}, ${c.lon.toFixed(1)}</div>` + METRICS.map(mm => `<div class="r"><span>${mm.label}</span><b>${c[mm.k] == null ? '–' : mm.fmt(c[mm.k])}</b></div>`).join('') + `<div class="r"><span>active wells</span><b>${fmt.num(c.n_active)}</b></div>`)).on('mouseleave', hideTip);
+      .on('mousemove', (ev, c) => showTip(ev, `<div class="t">${c.county || ''}${c.county ? ', ' : ''}${c.st} · ${c.lat.toFixed(1)}, ${c.lon.toFixed(1)}</div>` + METRICS.map(mm => `<div class="r"><span>${mm.label}</span><b>${c[mm.k] == null ? '–' : mm.fmt(c[mm.k])}</b></div>`).join('') + `<div class="r"><span>active wells</span><b>${fmt.num(c.n_active)} (oil ${fmt.num(c.n_oil)} · gas ${fmt.num(c.n_gas)})</b></div>`)).on('mouseleave', hideTip);
     const r = d3.select('#ramp').html(''); r.append('span').text(m.fmt(lo)); const bar = r.append('div').attr('class', 'bar').style('background', `linear-gradient(90deg, ${d3.range(0, 1.01, 0.1).map(t => color(m.log ? lo * Math.pow(hi / lo, t) : lo + (hi - lo) * t)).join(',')})`); r.append('span').text(m.fmt(hi));
-    r.append('span').attr('class', 'dim').text(`· ${m.agg === 'sum' ? 'cell total' : 'cell median'} · ${fmt.num(data.length)} cells · 5th–97th pct scale`); document.getElementById('map-sub').textContent = m.label; }
+    r.append('span').attr('class', 'dim').text(m.diverging ? `· blue = gas wells, amber = oil wells · ${fmt.num(data.length)} cells` : `· ${m.agg === 'sum' ? 'cell total' : 'cell median'} · ${fmt.num(data.length)} cells · 5th–97th pct scale`); document.getElementById('map-sub').textContent = m.label; }
   draw('pv10'); drawLayers();
   const c = DATA.tables.counties;
   table(document.getElementById('counties'), { rows: c, cols: [{ key: 'state', label: 'state' }, { key: 'county', label: 'county' }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'pv10', label: 'PV10', num: true, fmt: fmt.usd },
@@ -705,7 +726,7 @@ RENDER.indicators = () => {
 
 /* ---- value tab */
 RENDER.value = () => {
-  table(document.getElementById('val-states'), { rows: DATA.tables.states, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'bopd', label: 'oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'mcfd', label: 'gas mcf/d', num: true, fmt: v => fmt.num(v) },
+  table(document.getElementById('val-states'), { rows: DATA.tables.states, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'oil_wells', label: 'oil wells', num: true, fmt: v => fmt.num(v) }, { key: 'gas_wells', label: 'gas wells', num: true, fmt: v => fmt.num(v) }, { key: 'bopd', label: 'oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'mcfd', label: 'gas mcf/d', num: true, fmt: v => fmt.num(v) }, { key: 'pv10_oil', label: 'PV10 oil wells', num: true, fmt: fmt.usd }, { key: 'pv10_gas', label: 'PV10 gas wells', num: true, fmt: fmt.usd },
     { key: 'cf12', label: 'next 12m operating CF', num: true, fmt: fmt.usd }, { key: 'pv10_bear', label: 'PV10 bear', num: true, fmt: fmt.usd }, { key: 'pv10', label: 'PV10 base', num: true, fmt: fmt.usd }, { key: 'pv10_bull', label: 'PV10 bull', num: true, fmt: fmt.usd }, { key: 'rem_oil', label: 'remaining oil bbl', num: true, fmt: fmt.big }, { key: 'rem_gas', label: 'remaining gas mcf', num: true, fmt: fmt.big }] });
   table(document.getElementById('operators'), { rows: DATA.tables.operators, cols: [{ key: 'operator', label: 'operator' }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'states', label: 'states', num: true }, { key: 'med_vintage', label: 'median vintage', num: true, fmt: v => fmt.num(v) }, { key: 'bopd', label: 'oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'mcfd', label: 'gas mcf/d', num: true, fmt: v => fmt.num(v) }, { key: 'cf12', label: 'next 12m CF', num: true, fmt: fmt.usd }, { key: 'pv10', label: 'PV10', num: true, fmt: fmt.usd }] });
 };

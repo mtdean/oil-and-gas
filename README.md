@@ -125,6 +125,7 @@ Sources that cannot be automated and need a file dropped in by hand (details in 
 | Baker Hughes | blocks scripts | rig count xlsx → `data/raw/bakerhughes/` |
 | AER ST37 (Alberta wells) | `static.aer.ca` returned 403 to the pipeline | `ST_37_Excel.zip` → `data/raw/ab/` |
 | Oklahoma, Louisiana | production is request-form / paid subscription; owner handles separately | — |
+| Kentucky (`ky`) | eec.ky.gov returned 403 to the pipeline | yearly Oil/Gas workbooks → `data/raw/ky/<year>_oil.xlsx` etc. |
 
 Never spoof browser headers or otherwise evade a bot wall to get around these.
 

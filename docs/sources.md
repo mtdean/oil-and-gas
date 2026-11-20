@@ -99,6 +99,36 @@ All URLs were tested on 2026-11-19. Sizes are download sizes.
   Also `https://sddenr.net/pubs/og/SDOIL.gdb.zip` (file geodatabase: wells, recovery units, field boundaries).
 * ~2,100 wells, mostly Harding County Red River; Minnesota has no oil or gas production (nothing to load).
 
+### New York — DEC via data.ny.gov (`ny`, active)
+* Socrata CSV exports: `mxea-iw3u` annual production by well 2001+ (oil, gas, water, months producing; one row per well-year,
+  refreshed each July after a one-year confidentiality lag), `qcf2-zajk` 1985-2000 (gas/water only), `szye-wmt3` well list 1860+
+  (47k wells, surface + bottom-hole lat/lon, spud/completion/plug dates, slant, formation). Annual rows carry `period_months=12`
+  and are spread over months in `well_monthly` (`a_split`). 425k well-years, 20k producing wells, 45k located wells.
+
+### Kentucky — Division of Oil & Gas + KGS (`ky`, active, partial)
+* Production: yearly workbooks, one Oil and one Gas per year 1997-2024, one row per well with Jan..Dec columns, permit number,
+  lat/lon, pool, formation: `https://eec.ky.gov/Natural-Resources/Oil-and-Gas/Resources/Pages/Production-Reports.aspx` (current)
+  and `.../Archived-Production-Reports.aspx` (1997-2023). **eec.ky.gov refused the pipeline (403) on 2026-11-20** while the
+  same files download in a browser: drop them into `data/raw/ky/` as `<year>_oil.xlsx` / `<year>_gas.xlsx` (`.xls` before 2015).
+  Four seed workbooks (2010 oil, 2016 gas, 2024 oil+gas) are loaded; the rest is a manual download.
+* Wells: KGS GIS extract `https://kgs.uky.edu/ogdata/kyog_dd.zip` (162k wells, weekly, NAD83 lat/lon, permit, API, completion/plug
+  dates, TVD, bore type). Wells are keyed by permit: `api10` = KGS API where the permit matches, else `KYP<permit>`.
+
+### Checked 2026-11-20, not loadable in bulk
+* **Michigan**: EGLE GeoWebFace is now an ArcGIS Experience app (`experience.arcgis.com/experience/c44f7e5e509b4c879ea37c8f1e6972ea`);
+  michigan.gov answers 403 to scripts; production data sits behind the app's feature layers (item ids only in the app config). Manual export.
+* **Tennessee**: TDEC ArcGIS `tdeconline.tn.gov/arcgis/rest/services/Oil_and_Gas2/MapServer` (annual Production History table by permit)
+  answers 403 to scripts. Manual export.
+* **Arkansas**: AOGC web application firewall returns 403 for every scripted request (including the Access database
+  `aogc.state.ar.us/WellData/Files/AOGC.zip`). Manual: download AOGC.zip in a browser; reading it needs `mdbtools` (`brew install mdbtools`).
+* **Alabama**: State Oil & Gas Board is an Angular app over `/Production/...` POST endpoints (GetFirstMonth 1944-04 .. GetLastMonth, GetWellCsvProduction
+  by permit list / operator / field with a date range). Per-query, not bulk; not built.
+* **Mississippi**: MSOGB site offers interactive production search, well data browser and per-field/operator charts only; no bulk file.
+* **Nebraska**: NOGCC "Data Mining" portal is a session-based ASP.NET app with a data-request agreement (`DataMiningRequirements.pdf`); no bulk file.
+* **Manitoba**: Petrinex API answers "Unrecognized jurisdiction" for MB (volumetric extract not published); the Petroleum Branch sells
+  well production histories on request. Not loadable.
+* **Minnesota, Wisconsin**: no oil or gas production.
+
 ### Other states (planned, lower priority)
 Arkansas (AOGC), Mississippi (MSOGB), Alabama (GSA/SOGB), Michigan (EGLE), Illinois (ISGS), Kentucky (KGS), Nebraska (NOGCC), Virginia (DMME), New York (DEC), Nevada, South Dakota.
 

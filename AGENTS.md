@@ -112,6 +112,10 @@ manual drop-in. Ask the owner to download the file in a browser; do not work aro
 | **California (`ca`)** | Bulk production is by email request and ends 2021. Low priority per owner. | Wells only. |
 | **Kansas (`ks`)** | Loaded, but KGS pre-1987 production is IHS-licensed: **do not redistribute** it. | — |
 | **Pennsylvania (`pa`)** | Works, but the owner asked to ping it sparingly. | Leave the throttle alone. |
+| **Kentucky (`ky`)** | eec.ky.gov refused the pipeline (403); the KGS well extract works. | Download the yearly Oil/Gas production workbooks (1997-2024) from the two eec.ky.gov pages into `data/raw/ky/` as `<year>_oil.xlsx` / `<year>_gas.xlsx`; four seed years are loaded. |
+| **Ohio pre-2021** | ohiodnr.gov serves 404/403 to scripts; the connector's URL list only has 2021+. | Paste the 2010-2020 annual and per-year quarterly xlsx links from the ODNR production page into `sources/oh.py` `FILES`. |
+| **Michigan, Tennessee, Arkansas** | 403 / app-only (see `docs/sources.md` "Checked 2026-11-20"). | Manual exports if wanted; not built. |
+| **Alabama, Mississippi, Nebraska, Indiana, Illinois, Manitoba** | No bulk well-level file (interactive apps, request forms or paid). | Nothing to do. Minnesota and Wisconsin have no production. |
 | **Alberta / Saskatchewan pre-2022** | Public Petrinex extracts start 2022-01; earlier well history is a paid AER / SK Ministry product. | Nothing to do unless the owner buys it. |
 
 ## 7. Data semantics you must not get wrong

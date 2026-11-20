@@ -170,6 +170,9 @@ def hex_cells(con) -> list[dict]:
                quantile_cont(boe_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated) eur_boe,
                sum(pv10_usd) pv10, sum(cf_next12_usd) cf12, sum(oil_remaining_bbl + gas_remaining_mcf / 6) rem_boe,
                sum(oil_rate_bpd + gas_rate_mcfd / 6) boed, sum(oil_rate_bpd) bopd, sum(gas_rate_mcfd) mcfd,
+               sum(pv10_usd) FILTER (WHERE primary_product = 'oil') pv10_oil, sum(pv10_usd) FILTER (WHERE primary_product = 'gas') pv10_gas,
+               count(*) FILTER (WHERE primary_product = 'oil' AND status = 'active') n_oil, count(*) FILTER (WHERE primary_product = 'gas' AND status = 'active') n_gas,
+               sum(oil_remaining_bbl) rem_oil, sum(gas_remaining_mcf) rem_gas,
                quantile_cont(pv10_usd, 0.5) FILTER (WHERE status = 'active') pv10_med
         FROM w GROUP BY 1, 2 HAVING count(*) >= 3
     """).df()
@@ -177,7 +180,9 @@ def hex_cells(con) -> list[dict]:
     for r in df.itertuples(index=False):
         cells.append({"lat": round(r.clat, 3), "lon": round(r.clon, 3), "st": r.st, "county": r.county, "n": int(r.n), "n15": int(r.n15), "n_active": int(r.n_active), "n18": int(r.n18),
                       "cum12_oil": r.cum12_oil, "cum12_gas": r.cum12_gas, "eur_oil": r.eur_oil, "eur_gas": r.eur_gas, "eur_boe": r.eur_boe,
-                      "pv10": r.pv10, "cf12": r.cf12, "rem_boe": r.rem_boe, "boed": r.boed, "bopd": r.bopd, "mcfd": r.mcfd, "pv10_med": r.pv10_med})
+                      "pv10": r.pv10, "cf12": r.cf12, "rem_boe": r.rem_boe, "boed": r.boed, "bopd": r.bopd, "mcfd": r.mcfd, "pv10_med": r.pv10_med,
+                      "pv10_oil": r.pv10_oil, "pv10_gas": r.pv10_gas, "n_oil": int(r.n_oil), "n_gas": int(r.n_gas), "rem_oil": r.rem_oil, "rem_gas": r.rem_gas,
+                      "oil_share": (float(r.n_oil) / (r.n_oil + r.n_gas)) if (r.n_oil + r.n_gas) > 0 else None})
     return _clean(cells)
 
 
@@ -248,6 +253,8 @@ def tables(con) -> dict:
     """).df()
     totals = con.execute("""
         SELECT state, count(*) wells, sum(pv10_usd) pv10, sum(pv10_bear_usd) pv10_bear, sum(pv10_bull_usd) pv10_bull, sum(cf_next12_usd) cf12,
+               count(*) FILTER (WHERE primary_product = 'oil') oil_wells, count(*) FILTER (WHERE primary_product = 'gas') gas_wells,
+               sum(pv10_usd) FILTER (WHERE primary_product = 'oil') pv10_oil, sum(pv10_usd) FILTER (WHERE primary_product = 'gas') pv10_gas,
                sum(oil_rate_bpd) bopd, sum(gas_rate_mcfd) mcfd, sum(oil_remaining_bbl) rem_oil, sum(gas_remaining_mcf) rem_gas
         FROM well_value GROUP BY 1 ORDER BY pv10 DESC
     """).df()
