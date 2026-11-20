@@ -189,6 +189,7 @@ condensate is added to oil. Crown royalties replace severance taxes in the econo
   and Tight Oil / Shale Gas Plays (`.../TightOil_ShaleGas_Plays_Lower48_EIA.zip`, Dec 2021); BC Unconventional Play Trends (Montney, Horn River,
   Liard, Cordova) from the BC Data Catalogue WFS `WHSE_MINERAL_TENURE.OG_UNCONVENTNL_PLAY_TRENDS_SP`; Alberta shale/siltstone unit outlines
   (Duvernay, Montney, Muskwa, Nordegg, Wilrich, Exshaw) from AGS DIG 2013-0024 (`https://static.ags.aer.ca/files/document/DIG/DIG_2013_0024.zip`).
+  Western Canada Sedimentary Basin outline = the 'Preserved Rocks of the WCSB' polygon in AGS DIG 2008-0002 (`.../DIG/DIG_2008_0002.zip`).
   Saskatchewan has no public play-outline layer; the Williston basin polygon (EIA) stops at the border.
 
 ## Dead ends checked

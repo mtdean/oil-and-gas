@@ -6,6 +6,7 @@ Inputs (public, downloaded once into a work directory; see docs/sources.md "Map 
   EIA  SedimentaryBasins_US_EIA.zip             -> basins (NAME)
   BC   WHSE_MINERAL_TENURE.OG_UNCONVENTNL_PLAY_TRENDS_SP (GeoJSON from openmaps.gov.bc.ca WFS) -> plays
   AGS  DIG 2013-0024 Alberta shale/siltstone unit outlines (optional)             -> plays
+  AGS  DIG 2008-0002 Structural Elements of the WCSB ('Preserved Rocks' polygon)   -> basins (WCSB)
 
 Usage: python scripts/build_basins_asset.py <workdir>
 Needs pyshp (installed with ogdata) and node/npx for the topojson CLIs.
@@ -67,6 +68,14 @@ def main(work: Path) -> None:
             nm = str(rec[name_fld]).strip()
             if nm:
                 plays.append({"type": "Feature", "properties": {"name": nm, "kind": "play", "country": "CA", "basin": "WCSB"}, "geometry": sr.shape.__geo_interface__})
+    # Western Canada Sedimentary Basin: AGS DIG 2008-0002 "Structural Elements of the WCSB", polygon 'Preserved Rocks of the WCSB'
+    for shp in glob.glob(str(work / "wcsb" / "**" / "*.shp"), recursive=True):
+        r = shapefile.Reader(shp)
+        flds = [f[0] for f in r.fields[1:]]
+        for sr in r.iterShapeRecords():
+            rec = dict(zip(flds, sr.record))
+            if str(rec.get("DESCR1", "")).strip() == "Preserved Rocks of the WCSB":
+                basins.append({"type": "Feature", "properties": {"name": "WCSB", "full": "Western Canada Sedimentary Basin", "kind": "basin", "country": "CA"}, "geometry": sr.shape.__geo_interface__})
     work.joinpath("basins.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": basins}))
     work.joinpath("plays.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": plays}))
     print(f"{len(basins)} basins, {len(plays)} plays")
