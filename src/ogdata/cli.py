@@ -48,6 +48,45 @@ def cmd_update(args):
         sys.exit(1)
 
 
+def cmd_analytics(args):
+    from .analytics import wellcurves
+    wellcurves.build_all(tuple(args.only) if args.only else ("well_monthly", "well_decline", "type_curves", "well_value"))
+    _build_views_retry()
+
+
+def cmd_forecast(args):
+    from .analytics import economics, forecast
+    if args.api10 is None and (args.lat is None or args.lon is None):
+        raise SystemExit("give --lat/--lon or --api10")
+    spec = forecast.AnalogSpec(radius_mi=args.radius, min_wells=args.min_wells, vintage_min=args.vintage_min, formation=args.formation,
+                               product=args.product, include_lease_alloc=args.include_lease_alloc)
+    overrides = {k: v for k, v in {"nri": args.nri, "capex_mm": args.capex_mm, "loe_fixed_month": args.loe_fixed, "loe_var_per_boe": args.loe_var,
+                                   "oil_diff": args.oil_diff, "gas_diff": args.gas_diff, "discount_rate": args.discount, "ngl_yield_bbl_per_mmcf": args.ngl_yield}.items() if v is not None}
+    con = forecast.analytics_connection()
+    assumptions = None
+    if overrides:
+        # state is resolved from the analogs; patch after the first pass
+        probe = forecast.find_analogs(con, args.lat, args.lon, spec) if args.api10 is None else None
+        st = probe.state.mode().iat[0] if probe is not None and not probe.empty else "TX"
+        assumptions = economics.Assumptions(state=st, **overrides)
+    r = forecast.run(args.lat, args.lon, spec, assumptions, sims=args.sims, seed=args.seed, con=con, new_well=not args.pdp, api10=args.api10)
+    print(forecast.summary_text(r))
+    if args.json:
+        from pathlib import Path
+        Path(args.json).write_text(r.to_json())
+        print(f"\nwrote {args.json}")
+    if args.html:
+        from .analytics import report
+        report.write_well_report(r, args.html)
+        print(f"wrote {args.html}")
+
+
+def cmd_dashboard(args):
+    from .analytics import dashboard
+    out = dashboard.build(args.out)
+    print(f"wrote {out}")
+
+
 def _build_views_retry(tries: int = 6) -> None:
     import time
     for i in range(tries):
@@ -106,6 +145,33 @@ def main(argv=None):
     q.add_argument("--csv", action="store_true")
     q.add_argument("--max-rows", type=int, default=200)
     q.set_defaults(fn=cmd_sql)
+
+    an = sp.add_parser("analytics", help="build well_monthly / well_decline / type_curves (data/parquet/analytics)")
+    an.add_argument("--only", nargs="*", choices=["well_monthly", "well_decline", "type_curves", "well_value"], default=None)
+    an.set_defaults(fn=cmd_analytics)
+
+    fc = sp.add_parser("forecast", help="lat/lon (or --api10) production forecast with Monte Carlo economics")
+    fc.add_argument("--lat", type=float); fc.add_argument("--lon", type=float)
+    fc.add_argument("--api10", help="existing well: PDP forecast from its own decline (no capex)")
+    fc.add_argument("--radius", type=float, default=10.0, help="analog search radius, miles (expands if too few wells)")
+    fc.add_argument("--min-wells", type=int, default=25)
+    fc.add_argument("--vintage-min", type=int, default=2014)
+    fc.add_argument("--formation", help="substring filter on reported formation/pool/field")
+    fc.add_argument("--product", choices=["oil", "gas"])
+    fc.add_argument("--include-lease-alloc", action="store_true", help="allow TX/KS multi-well lease allocations as analogs")
+    fc.add_argument("--sims", type=int, default=2000)
+    fc.add_argument("--seed", type=int, default=7)
+    fc.add_argument("--pdp", action="store_true", help="no capex (existing production)")
+    fc.add_argument("--nri", type=float); fc.add_argument("--capex-mm", type=float); fc.add_argument("--loe-fixed", type=float); fc.add_argument("--loe-var", type=float)
+    fc.add_argument("--oil-diff", type=float); fc.add_argument("--gas-diff", type=float); fc.add_argument("--discount", type=float)
+    fc.add_argument("--ngl-yield", type=float, help="bbl NGL per mmcf wellhead gas")
+    fc.add_argument("--json", help="write full result JSON here")
+    fc.add_argument("--html", help="write a self-contained HTML report here")
+    fc.set_defaults(fn=cmd_forecast)
+
+    db = sp.add_parser("dashboard", help="build the HTML dashboard (dashboards/og_monitor.html)")
+    db.add_argument("--out", default=None)
+    db.set_defaults(fn=cmd_dashboard)
 
     args = p.parse_args(argv)
     _setup_logging(args.verbose)

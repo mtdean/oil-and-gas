@@ -11,13 +11,14 @@ type_curves   - P10/P50/P90/mean monthly volumes by month-since-first-production
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-from ..paths import PARQUET
+from ..paths import DATA, PARQUET
 from ..storage import connect
 from . import decline
 
@@ -129,9 +130,12 @@ def _state_arrays(con, st: str, lo: int, hi: int):
     """).df()
     if wells.empty:
         return wells, None, None
-    con.register("sel", wells[["api10", "first_prod", "rn"]])
+    wells = wells.reset_index(drop=True)
+    sel_df = wells[["api10", "first_prod"]].copy()
+    sel_df["i"] = np.arange(len(sel_df))
+    con.register("sel", sel_df)
     rows = con.execute(f"""
-        SELECT s.rn - {lo} AS i, datediff('month', s.first_prod, m.period) AS t, m.oil_bbl, m.gas_mcf
+        SELECT s.i, datediff('month', s.first_prod, m.period) AS t, m.oil_bbl, m.gas_mcf
         FROM wm_state m JOIN sel s USING (api10)
         WHERE m.period >= s.first_prod AND datediff('month', s.first_prod, m.period) < {T_MAX}
     """).fetchnumpy()
@@ -141,8 +145,8 @@ def _state_arrays(con, st: str, lo: int, hi: int):
     gas = np.full((N, T_MAX), np.nan, dtype=np.float32)
     i = np.asarray(rows["i"], dtype=np.int64)
     t = np.asarray(rows["t"], dtype=np.int64)
-    o = np.asarray(pd.array(rows["oil_bbl"]).astype("float64") if not isinstance(rows["oil_bbl"], np.ndarray) else rows["oil_bbl"], dtype=np.float64)
-    g = np.asarray(pd.array(rows["gas_mcf"]).astype("float64") if not isinstance(rows["gas_mcf"], np.ndarray) else rows["gas_mcf"], dtype=np.float64)
+    o = np.ma.filled(np.ma.asarray(rows["oil_bbl"], dtype=np.float64), np.nan)
+    g = np.ma.filled(np.ma.asarray(rows["gas_mcf"], dtype=np.float64), np.nan)
     oil[i, t] = o
     gas[i, t] = g
     return wells, oil, gas
@@ -172,7 +176,9 @@ def _product_metrics(Q: np.ndarray, econ: float, prefix: str) -> dict[str, np.nd
     order = np.where(rel_pos, np.arange(decline.MAX_FIT_MONTHS)[None, :], -1)
     top3 = np.sort(order, axis=1)[:, -3:]
     vals = np.where(top3 >= 0, aligned[np.arange(N)[:, None], np.maximum(top3, 0)], np.nan)
-    q_anchor = np.nanmean(np.where(np.isfinite(vals), vals, np.nan), axis=1) if N else np.array([])
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        q_anchor = np.nanmean(np.where(np.isfinite(vals), vals, np.nan), axis=1) if N else np.array([])
     # forecast remaining from anchor to HORIZON months after first production
     months_left = np.maximum(HORIZON - (peak + t_last + 1), 0)
     H = int(months_left.max()) if N else 0
@@ -216,6 +222,7 @@ def build_well_decline(con: duckdb.DuckDBPyConnection) -> None:
             m.update(_product_metrics(oil, ECON_OIL, "oil"))
             m.update(_product_metrics(gas, ECON_GAS, "gas"))
             df = pd.concat([wells.drop(columns=["rn"]).reset_index(drop=True), pd.DataFrame(m)], axis=1)
+            df.insert(1, "state", st)
             df["boe_cum"] = df["oil_cum"] + df["gas_cum"] / 6
             df["boe_eur"] = df["oil_eur"].fillna(df["oil_cum"]) + df["gas_eur"].fillna(df["gas_cum"]) / 6
             df["primary_product"] = np.where(df["oil_cum"] >= df["gas_cum"] / 6, "oil", "gas")
@@ -237,39 +244,72 @@ VINTAGE_SQL = """CASE WHEN vintage < 2005 THEN 'pre-2005' WHEN vintage < 2010 TH
 
 
 def build_type_curves(con: duckdb.DuckDBPyConnection) -> None:
+    """Percentile curves by group/vintage. The normalised well-month table is staged to parquet with
+    integer keys so each aggregation streams from disk; approx_quantile (t-digest) keeps memory bounded.
+    Only the 25 largest formations per state (>= 30 wells) and counties with >= 30 wells and vintages >= 2005 get curves; lease-allocated wells excluded."""
+    stage = ADIR / "_tc_norm.parquet"
     con.execute(f"CREATE OR REPLACE VIEW _wm AS SELECT * FROM read_parquet('{ADIR / 'well_monthly' / '*.parquet'}')")
     con.execute(f"CREATE OR REPLACE VIEW _wd AS SELECT * FROM read_parquet('{ADIR / 'well_decline.parquet'}')")
     con.execute(f"""
-        CREATE OR REPLACE TEMP TABLE norm AS
-        SELECT m.api10, m.state, d.county, d.formation, {VINTAGE_SQL} AS vintage_bucket, d.alloc,
-               datediff('month', d.first_prod, m.period) AS t, m.oil_bbl, m.gas_mcf
-        FROM _wm m JOIN _wd d USING (api10, state)
-        WHERE d.vintage >= 2000 AND m.period >= d.first_prod AND datediff('month', d.first_prod, m.period) < 120
+        COPY (
+            SELECT dense_rank() OVER (ORDER BY m.api10)::INTEGER AS wid, m.state, d.county, d.formation, {VINTAGE_SQL} AS vintage_bucket,
+                   datediff('month', d.first_prod, m.period)::SMALLINT AS t, m.oil_bbl::FLOAT AS oil_bbl, m.gas_mcf::FLOAT AS gas_mcf
+            FROM _wm m JOIN _wd d USING (api10, state)
+            WHERE d.vintage >= 2005 AND d.alloc <> 'lease_alloc' AND m.period >= d.first_prod AND datediff('month', d.first_prod, m.period) < 120
+        ) TO '{stage}' (FORMAT PARQUET, COMPRESSION ZSTD)
     """)
-    parts = []
-    for gtype, key in (("state", "NULL"), ("state_county", "county"), ("state_formation", "formation")):
-        for vint in (VINTAGE_SQL.replace("vintage", "vintage_bucket") if False else "vintage_bucket", "'all'"):
-            parts.append(f"""
+    con.execute(f"CREATE OR REPLACE VIEW norm AS SELECT * FROM read_parquet('{stage}')")
+    n = con.execute("SELECT count(*) FROM norm").fetchone()[0]
+    log.info("type curves: %s normalised well-months", f"{n:,}")
+    # top 25 formations per state by well count (t-digests per group x vintage x month add up fast)
+    con.execute("""CREATE OR REPLACE TEMP TABLE keep_fm AS
+        SELECT state, formation FROM (
+            SELECT state, formation, count(DISTINCT wid) nw, row_number() OVER (PARTITION BY state ORDER BY count(DISTINCT wid) DESC) rk
+            FROM norm WHERE formation IS NOT NULL GROUP BY 1, 2) WHERE nw >= 30 AND rk <= 25""")
+    con.execute("CREATE OR REPLACE TEMP TABLE keep_ct AS SELECT state, county FROM norm WHERE county IS NOT NULL GROUP BY 1, 2 HAVING count(DISTINCT wid) >= 30")
+    out = ADIR / "type_curves.parquet"
+    parts_dir = ADIR / "_tc_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    for old in parts_dir.glob("*.parquet"):
+        old.unlink()
+    i = 0
+    for gtype, key, filt in (("state", "NULL", ""), ("state_county", "county", "JOIN keep_ct USING (state, county)"), ("state_formation", "formation", "JOIN keep_fm USING (state, formation)")):
+        for vint in ("vintage_bucket", "'all'"):
+            i += 1
+            sql = f"""
                 SELECT '{gtype}' AS group_type, state, {key}::VARCHAR AS key, {vint} AS vintage, t,
-                       count(*) AS n, count(DISTINCT api10) AS n_wells,
-                       quantile_cont(oil_bbl, 0.1) oil_p10, quantile_cont(oil_bbl, 0.5) oil_p50, quantile_cont(oil_bbl, 0.9) oil_p90, avg(oil_bbl) oil_mean,
-                       quantile_cont(gas_mcf, 0.1) gas_p10, quantile_cont(gas_mcf, 0.5) gas_p50, quantile_cont(gas_mcf, 0.9) gas_p90, avg(gas_mcf) gas_mean
-                FROM norm WHERE alloc <> 'lease_alloc' {"AND " + key + " IS NOT NULL" if key != "NULL" else ""}
-                GROUP BY ALL HAVING count(DISTINCT api10) >= 10
-            """)
-    _copy(con, " UNION ALL ".join(parts) + " ORDER BY group_type, state, key, vintage, t", ADIR / "type_curves.parquet")
-    con.execute("DROP TABLE norm")
+                       count(*) AS n, count(DISTINCT wid) AS n_wells,
+                       approx_quantile(oil_bbl, 0.1) oil_p10, approx_quantile(oil_bbl, 0.5) oil_p50, approx_quantile(oil_bbl, 0.9) oil_p90, avg(oil_bbl) oil_mean,
+                       approx_quantile(gas_mcf, 0.1) gas_p10, approx_quantile(gas_mcf, 0.5) gas_p50, approx_quantile(gas_mcf, 0.9) gas_p90, avg(gas_mcf) gas_mean
+                FROM norm {filt}
+                GROUP BY ALL HAVING count(DISTINCT wid) >= 10
+            """
+            _copy(con, sql, parts_dir / f"part{i}.parquet")
+    _copy(con, f"SELECT * FROM read_parquet('{parts_dir}/*.parquet') ORDER BY group_type, state, key, vintage, t", out)
+    for old in parts_dir.glob("*.parquet"):
+        old.unlink()
+    parts_dir.rmdir()
+    con.execute("DROP VIEW norm; DROP TABLE keep_fm; DROP TABLE keep_ct")
+    stage.unlink(missing_ok=True)
 
 
-def build_all(which: tuple[str, ...] = ("well_monthly", "well_decline", "type_curves")) -> None:
-    con = connect()
+def build_all(which: tuple[str, ...] = ("well_monthly", "well_decline", "type_curves", "well_value")) -> None:
+    # in-memory connection with the same views: the warehouse file stays unlocked for `ogdata sql` while this runs
+    from ..storage import build_views
+    con = duckdb.connect()
+    build_views(con)
     try:
-        con.execute("SET memory_limit='12GB'; SET threads=8; SET preserve_insertion_order=false")
+        con.execute(f"SET memory_limit='10GB'; SET threads=6; SET preserve_insertion_order=false; SET temp_directory='{DATA / 'tmp'}'")
         if "well_monthly" in which:
             build_well_monthly(con)
         if "well_decline" in which:
             build_well_decline(con)
         if "type_curves" in which:
             build_type_curves(con)
+        if "well_value" in which:
+            from . import valuation
+            from ..storage import _build_analytics_views
+            _build_analytics_views(con)
+            valuation.build(con)
     finally:
         con.close()

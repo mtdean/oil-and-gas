@@ -111,3 +111,15 @@ register it in `registry.py`. `storage.write_sql` is available when a file is to
 big for pandas (Texas and New Mexico use it).
 
 See `docs/sources.md` for verified URLs, formats, cadences, and gotchas per source.
+
+## Analytics: decline curves, forecasts, Monte Carlo, dashboard
+
+```
+ogdata analytics                      # well_monthly, well_decline (Arps fits), type_curves, well_value
+ogdata forecast --lat 32.3 --lon -103.6 --sims 5000 --html out.html   # lat/lon -> analogs -> P10/P50/P90 + economics
+ogdata forecast --api10 3002543210 --html well.html                   # existing well PDP forecast
+ogdata dashboard                      # dashboards/og_monitor.html (Bloomberg-style monitor)
+ogdata sql "select * from well_decline where state='ND' and vintage>=2020 limit 5"
+```
+
+Method, tables and assumptions: [docs/analytics.md](docs/analytics.md).

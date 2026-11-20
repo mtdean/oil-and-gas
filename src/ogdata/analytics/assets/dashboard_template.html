@@ -1,0 +1,213 @@
+<title>OGDATA Monitor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/*__THEME_CSS__*/
+</style>
+<div class="topbar">
+  <span class="topbar-title">&lt;OGDATA&gt;</span>
+  <nav class="tabnav" id="nav">
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="map">Map</button>
+    <button data-view="wells">Wells &amp; type curves</button>
+    <button data-view="indicators">Leading indicators</button>
+    <button data-view="value">PDP value</button>
+  </nav>
+  <span class="topbar-meta" id="meta"></span>
+</div>
+<div class="ticker" id="ticker"></div>
+<div class="wrap">
+  <section class="view" id="view-overview">
+    <div class="grid">
+      <div class="panel span12"><div class="hd"><h2>Read me first</h2><span class="sub">what this page is and what it is not</span></div>
+        <div class="bd note" id="readme"></div></div>
+      <div class="panel span8"><div class="hd"><h2>US onshore production in the warehouse</h2><span class="sub" id="prod-sub"></span>
+          <div class="ctl seg" id="prod-seg"><button data-k="oil_bpd" class="on">Oil b/d</button><button data-k="gas_mcfd">Gas mcf/d</button></div></div>
+        <div class="bd"><div class="chart" id="prod-chart"></div></div></div>
+      <div class="panel span4"><div class="hd"><h2>PDP value by state</h2><span class="sub">PV10 of forecast operating cash flow, base deck</span></div>
+        <div class="bd"><div class="chart" id="pv-state"></div></div></div>
+      <div class="panel span6"><div class="hd"><h2>PDP cash flow projection</h2><span class="sub">operating cash flow by state, next 10 years</span>
+          <div class="ctl seg" id="cf-seg"><button data-k="bear">Bear −25%</button><button data-k="base" class="on">Base deck</button><button data-k="bull">Bull +25%</button></div></div>
+        <div class="bd"><div class="chart" id="cf-chart"></div></div></div>
+      <div class="panel span6"><div class="hd"><h2>Price deck</h2><span class="sub" id="deck-sub"></span></div>
+        <div class="bd"><div class="chart" id="deck-chart"></div></div></div>
+      <div class="panel span12"><div class="hd"><h2>Coverage</h2><span class="sub">well-level series available for curve fitting, by state</span></div>
+        <div class="bd" id="coverage"></div></div>
+    </div>
+  </section>
+  <section class="view" id="view-map" hidden>
+    <div class="grid">
+      <div class="panel span12"><div class="hd"><h2>Well heat map</h2><span class="sub" id="map-sub">0.2° cells · hover for county detail</span>
+          <div class="ctl seg" id="map-seg"></div></div>
+        <div class="bd"><div class="map" id="map"></div><div class="ramp" id="ramp"></div></div></div>
+      <div class="panel span12"><div class="hd"><h2>Top counties by PDP PV10</h2><span class="sub">active wells with decline fits, base deck</span></div>
+        <div class="bd" id="counties"></div></div>
+    </div>
+  </section>
+  <section class="view" id="view-wells" hidden>
+    <div class="grid">
+      <div class="panel span12"><div class="hd"><h2>Type curves</h2><span class="sub">median monthly volume by month on production, P10–P90 band · wells with first production in the vintage window</span>
+          <div class="ctl"><select id="tc-group"></select><select id="tc-prod"><option value="oil">oil bbl/month</option><option value="gas">gas mcf/month</option></select>
+            <div class="seg" id="tc-scale"><button data-k="lin" class="on">lin</button><button data-k="log">log</button></div></div></div>
+        <div class="bd"><div class="chart" id="tc-chart"></div></div></div>
+      <div class="panel span6"><div class="hd"><h2>Vintage productivity</h2><span class="sub">median first-12-month cum per well by first-production year</span>
+          <div class="ctl"><select id="vt-state"></select></div></div>
+        <div class="bd"><div class="chart" id="vt-chart"></div></div></div>
+      <div class="panel span6"><div class="hd"><h2>Vintage decline &amp; EUR</h2><span class="sub">median oil EUR, IP90 and first-year decline</span></div>
+        <div class="bd" id="vt-table"></div></div>
+      <div class="panel span12"><div class="hd"><h2>Type curve groups</h2><span class="sub">P50 month-6 volume and well count by group and vintage</span></div>
+        <div class="bd" id="tc-table"></div></div>
+    </div>
+  </section>
+  <section class="view" id="view-indicators" hidden>
+    <div class="grid" id="ind-grid"></div>
+  </section>
+  <section class="view" id="view-value" hidden>
+    <div class="grid">
+      <div class="panel span12"><div class="hd"><h2>PDP valuation by state</h2><span class="sub">active wells with decline fits · bear/base/bull = price deck −25% / base / +25% · default cost assumptions</span></div>
+        <div class="bd" id="val-states"></div></div>
+      <div class="panel span12"><div class="hd"><h2>Top operators by PDP PV10</h2><span class="sub">operator as last reported</span></div>
+        <div class="bd" id="operators"></div></div>
+    </div>
+  </section>
+</div>
+<div class="statusbar"><span id="status"></span></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+/*__DATA__*/
+/*__CHARTS_JS__*/
+const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska'};
+const toPts = (s, parse = parseD) => s.d.map((d, i) => ({ d: parse(d), v: s.v[i] }));
+const sum = a => a.reduce((x, y) => x + (y || 0), 0);
+document.getElementById('meta').textContent = `data as of ${DATA.generated}`;
+document.getElementById('status').textContent = `OGDATA · ${DATA.coverage.length} states · ${fmt.big(sum(DATA.coverage.map(c => c.wells)))} wells with monthly history · ${fmt.big(sum(DATA.coverage.map(c => c.fitted || 0)))} decline fits · prices EIA spot/STEO`;
+
+/* ---- nav (hash routed) */
+const views = ['overview', 'map', 'wells', 'indicators', 'value'];
+function show(v) { if (!views.includes(v)) v = 'overview'; views.forEach(k => { document.getElementById('view-' + k).hidden = k !== v; });
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.view === v)); if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v); rendered[v] || (rendered[v] = true, RENDER[v]()); }
+const rendered = {}; const RENDER = {};
+document.getElementById('nav').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.view); });
+window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+
+/* ---- ticker */
+(function () { const t = d3.select('#ticker');
+  DATA.ticker.forEach(k => { const d = k.fmt === '2' ? 2 : 0; const chg = (a, b) => (a == null || b == null) ? '' : `<span class="${a - b >= 0 ? 'pos' : 'neg'}">${a - b >= 0 ? '▲' : '▼'} ${fmt.pct((a / b - 1) * 100)}</span>`;
+    t.append('div').attr('class', 'tick').html(`<div class="l">${k.label}</div><div class="v">${fmt.num(k.value, d)}<span class="u">${k.unit}</span></div><div class="c">${chg(k.value, k.prev)} <span class="dim">1m</span> ${chg(k.value, k.m1)} <span class="dim">1y</span> ${chg(k.value, k.y1)} <span class="dim">${k.asof}</span></div>`); }); })();
+
+/* ---- overview */
+RENDER.overview = () => {
+  document.getElementById('readme').innerHTML = `<b>What this is.</b> Every panel is computed from the ogdata warehouse: well-level monthly production from state regulators (TX oil leases allocated to wells, see Coverage), decline-curve fits per well, and EIA / CFTC / Dallas Fed macro series. Volumes are as reported (wellhead), prices are EIA spot and STEO forecasts, and PDP values use default cost assumptions (NRI 75%, state severance tax, LOE $8k/month or $2.5k for low-rate wells, no hedges, pre-tax). <b>What it is not.</b> Oklahoma, Louisiana and Alaska production are not loaded (not public in bulk); Pennsylvania is partial; Texas oil is lease-level so single-well leases are exact and multi-well leases are equal-split (excluded from type curves). Treat PV10 as a relative screening number, not a reserve report. Run <code>ogdata forecast --lat .. --lon ..</code> for a location-specific Monte Carlo.`;
+  const sp = DATA.state_production; const months = sp.months.map(parseM);
+  function prodChart(key) { const totals = Object.entries(sp[key]).map(([st, v]) => [st, sum(v.slice(-12))]).sort((a, b) => b[1] - a[1]);
+    const top = totals.slice(0, 7).map(t => t[0]); const other = totals.slice(7).map(t => t[0]);
+    const series = top.map((st, i) => ({ label: STATE_NAMES[st] || st, color: SERIES[i], values: sp[key][st].map(v => v || 0) }));
+    if (other.length) series.push({ label: 'Other', color: '#555', values: months.map((_, i) => sum(other.map(st => sp[key][st][i]))) });
+    stackedArea(document.getElementById('prod-chart'), { x: months, series, height: 260, yFmt: fmt.big });
+    document.getElementById('prod-sub').textContent = `monthly volumes ÷ days, loaded states only · last month ${sp.months.at(-1)}`; }
+  prodChart('oil_bpd');
+  document.getElementById('prod-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#prod-seg button').forEach(x => x.classList.toggle('on', x === b)); prodChart(b.dataset.k); });
+  const st = DATA.tables.states.filter(s => s.pv10 > 0);
+  barChart(document.getElementById('pv-state'), { horizontal: true, ml: 110, items: st.map(s => ({ label: STATE_NAMES[s.state] || s.state, value: s.pv10 })), yFmt: fmt.usd });
+  const cf = DATA.cashflow;
+  function cfChart(deck) { const d = cf.decks[deck]; const order = Object.entries(d).map(([s, v]) => [s, sum(v)]).sort((a, b) => b[1] - a[1]); const top = order.slice(0, 7).map(o => o[0]), other = order.slice(7).map(o => o[0]);
+    const series = top.map((s, i) => ({ label: STATE_NAMES[s] || s, color: SERIES[i], values: d[s] })); if (other.length) series.push({ label: 'Other', color: '#555', values: cf.years.map((_, i) => sum(other.map(s => d[s][i]))) });
+    stackedArea(document.getElementById('cf-chart'), { x: cf.years.map(String), xType: 'band', series, height: 240, yFmt: fmt.usd }); }
+  cfChart('base');
+  document.getElementById('cf-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#cf-seg button').forEach(x => x.classList.toggle('on', x === b)); cfChart(b.dataset.k); });
+  const pdm = cf.price_deck.months.map(parseM);
+  lineChart(document.getElementById('deck-chart'), { height: 240, yZero: true, series: [{ label: 'WTI $/bbl (deck)', color: SERIES[0], points: pdm.map((d, i) => ({ d, v: cf.price_deck.wti[i] })), thick: true },
+    { label: 'Henry Hub $/mmbtu ×10 (deck)', color: SERIES[1], points: pdm.map((d, i) => ({ d, v: cf.price_deck.hh[i] * 10 })) }], yFmt: v => '$' + fmt.num(v, 0) });
+  document.getElementById('deck-sub').textContent = `EIA STEO through its horizon, then flat · vol oil ${(cf.price_deck.vol_oil * 100).toFixed(0)}% / gas ${(cf.price_deck.vol_gas * 100).toFixed(0)}% ann., ρ ${cf.price_deck.rho.toFixed(2)} (Monte Carlo inputs)`;
+  table(document.getElementById('coverage'), { rows: DATA.coverage, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'lease_alloc_wells', label: 'lease-allocated', num: true, fmt: v => fmt.num(v) },
+    { key: 'fitted', label: 'decline fits', num: true, fmt: v => fmt.num(v) }, { key: 'active', label: 'active', num: true, fmt: v => fmt.num(v) }, { key: 'well_months', label: 'well-months', num: true, fmt: v => fmt.num(v) }, { key: 'first', label: 'first', fmt: v => (v || '').slice(0, 7) }, { key: 'last', label: 'last', fmt: v => (v || '').slice(0, 7) }] });
+};
+
+/* ---- map */
+const METRICS = [
+  { k: 'pv10', label: 'PDP PV10 ($)', agg: 'sum', fmt: fmt.usd, log: true },
+  { k: 'cf12', label: 'Next-12m cash flow ($)', agg: 'sum', fmt: fmt.usd, log: true },
+  { k: 'boed', label: 'Current rate (boe/d)', agg: 'sum', fmt: v => fmt.big(v), log: true },
+  { k: 'n', label: 'Wells (all vintages)', agg: 'sum', fmt: v => fmt.num(v), log: true },
+  { k: 'n15', label: 'Wells, 2015+ vintage', agg: 'sum', fmt: v => fmt.num(v), log: true },
+  { k: 'cum12_oil', label: 'Median 12-mo oil per well, 2018+ (bbl)', agg: 'med', fmt: v => fmt.big(v) },
+  { k: 'eur_oil', label: 'Median oil EUR per well, 2018+ (bbl)', agg: 'med', fmt: v => fmt.big(v) },
+  { k: 'eur_gas', label: 'Median gas EUR per well, 2018+ (mcf)', agg: 'med', fmt: v => fmt.big(v) },
+  { k: 'pv10_med', label: 'Median PV10 per active well ($)', agg: 'med', fmt: fmt.usd },
+];
+RENDER.map = () => {
+  const seg = d3.select('#map-seg'); METRICS.forEach((m, i) => seg.append('button').attr('data-k', m.k).classed('on', i === 0).text(m.label.split(' (')[0]));
+  seg.on('click', e => { const b = e.target.closest('button'); if (!b) return; seg.selectAll('button').classed('on', function () { return this === b; }); draw(b.dataset.k); });
+  const el = document.getElementById('map'); const W = Math.max(el.clientWidth || 900, 320), H = Math.round(W * 0.62);
+  const svg = d3.select(el).html('').append('svg').attr('viewBox', `0 0 ${W} ${H}`);
+  const proj = d3.geoAlbersUsa().fitExtent([[8, 8], [W - 8, H - 8]], topojson.feature(US_TOPO, US_TOPO.objects.states)); const path = d3.geoPath(proj);
+  svg.append('g').selectAll('path').data(topojson.feature(US_TOPO, US_TOPO.objects.states).features).join('path').attr('class', 'state').attr('d', path);
+  const cells = svg.append('g');
+  const cellPath = c => { const s = 0.2; const p = [[c.lon, c.lat], [c.lon + s, c.lat], [c.lon + s, c.lat + s], [c.lon, c.lat + s]].map(q => proj(q)); return p.some(q => !q) ? null : 'M' + p.map(q => q.join(',')).join('L') + 'Z'; };
+  function draw(key) { const m = METRICS.find(x => x.k === key); const data = DATA.hex.filter(c => c[key] != null && c[key] > 0 && cellPath(c));
+    const vals = data.map(c => c[key]).sort(d3.ascending); const lo = d3.quantile(vals, 0.05), hi = d3.quantile(vals, 0.97);
+    const color = (m.log ? d3.scaleSequentialLog() : d3.scaleSequential()).domain([Math.max(lo, 1e-9), hi]).interpolator(d3.interpolateRgb.gamma(1.6)('#3a2008', '#ffb347')).clamp(true);
+    cells.selectAll('path').data(data, c => c.lat + ':' + c.lon).join('path').attr('class', 'cell').attr('d', cellPath).attr('fill', c => color(c[key]))
+      .on('mousemove', (ev, c) => showTip(ev, `<div class="t">${c.county || ''}${c.county ? ', ' : ''}${c.st} · ${c.lat.toFixed(1)}, ${c.lon.toFixed(1)}</div>` + METRICS.map(mm => `<div class="r"><span>${mm.label}</span><b>${c[mm.k] == null ? '–' : mm.fmt(c[mm.k])}</b></div>`).join('') + `<div class="r"><span>active wells</span><b>${fmt.num(c.n_active)}</b></div>`)).on('mouseleave', hideTip);
+    const r = d3.select('#ramp').html(''); r.append('span').text(m.fmt(lo)); const bar = r.append('div').attr('class', 'bar').style('background', `linear-gradient(90deg, ${d3.range(0, 1.01, 0.1).map(t => color(m.log ? lo * Math.pow(hi / lo, t) : lo + (hi - lo) * t)).join(',')})`); r.append('span').text(m.fmt(hi));
+    r.append('span').attr('class', 'dim').text(`· ${m.agg === 'sum' ? 'cell total' : 'cell median'} · ${fmt.num(data.length)} cells · 5th–97th pct scale`); document.getElementById('map-sub').textContent = m.label; }
+  draw('pv10');
+  const c = DATA.tables.counties;
+  table(document.getElementById('counties'), { rows: c, cols: [{ key: 'state', label: 'state' }, { key: 'county', label: 'county' }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'pv10', label: 'PV10', num: true, fmt: fmt.usd },
+    { key: 'cf12', label: 'next 12m CF', num: true, fmt: fmt.usd }, { key: 'bopd', label: 'oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'mcfd', label: 'gas mcf/d', num: true, fmt: v => fmt.num(v) }, { key: 'rem_oil', label: 'remaining oil bbl', num: true, fmt: fmt.big }, { key: 'rem_gas', label: 'remaining gas mcf', num: true, fmt: fmt.big }] });
+};
+
+/* ---- wells & type curves */
+RENDER.wells = () => {
+  const tc = DATA.type_curves; const groups = Object.keys(tc).sort((a, b) => a.localeCompare(b));
+  const sel = d3.select('#tc-group'); sel.selectAll('option').data(groups).join('option').attr('value', d => d).text(d => d);
+  const prefer = groups.find(g => g.startsWith('ND')) || groups[0]; sel.property('value', prefer);
+  let scale = 'lin';
+  function drawTC() { const g = tc[sel.property('value')]; const prod = d3.select('#tc-prod').property('value'); const vint = Object.keys(g.vintages);
+    const series = vint.map((v, i) => { const d = g.vintages[v]; return { label: `${v} (${fmt.num(d3.max(d.n_wells))} wells)`, color: SERIES[i], t: d.t, p10: d[prod + '_p10'], p50: d[prod + '_p50'], p90: d[prod + '_p90'] }; });
+    fanChart(document.getElementById('tc-chart'), { series, height: 300, yLog: scale === 'log' }); }
+  sel.on('change', drawTC); d3.select('#tc-prod').on('change', drawTC);
+  d3.select('#tc-scale').on('click', e => { const b = e.target.closest('button'); if (!b) return; d3.selectAll('#tc-scale button').classed('on', function () { return this === b; }); scale = b.dataset.k; drawTC(); });
+  drawTC();
+  const vt = DATA.vintages; const states = [...new Set(vt.map(v => v.state))].sort(); const vsel = d3.select('#vt-state'); vsel.selectAll('option').data(states).join('option').attr('value', d => d).text(d => STATE_NAMES[d] || d);
+  vsel.property('value', states.includes('ND') ? 'ND' : states[0]);
+  function drawVT() { const st = vsel.property('value'); const rows = vt.filter(v => v.state === st); const oil = rows.some(r => r.cum12_oil_med > 0) && d3.sum(rows, r => r.n_oil) > d3.sum(rows, r => r.n) / 2;
+    barChart(document.getElementById('vt-chart'), { height: 240, items: rows.map(r => ({ label: String(r.vintage), value: oil ? r.cum12_oil_med : r.cum12_gas_med, extra: `${fmt.num(r.n)} wells` })), yFmt: fmt.big, valueLabel: oil ? 'median 12-mo oil, bbl' : 'median 12-mo gas, mcf' });
+    table(document.getElementById('vt-table'), { rows, cols: [{ key: 'vintage', label: 'vintage' }, { key: 'n', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'ip90_oil_med', label: 'IP90 oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'cum12_oil_med', label: '12-mo oil', num: true, fmt: fmt.big },
+      { key: 'eur_oil_med', label: 'oil EUR', num: true, fmt: fmt.big }, { key: 'cum12_gas_med', label: '12-mo gas', num: true, fmt: fmt.big }, { key: 'eur_gas_med', label: 'gas EUR', num: true, fmt: fmt.big }, { key: 'd1_oil_med', label: 'yr-1 decline', num: true, fmt: v => v == null ? '–' : (v * 100).toFixed(0) + '%' }] }); }
+  vsel.on('change', drawVT); drawVT();
+  const rows = []; groups.forEach(gk => { const g = tc[gk]; Object.entries(g.vintages).forEach(([v, d]) => { const i = d.t.indexOf(6); rows.push({ group: gk, vintage: v, n: d3.max(d.n_wells), oil6: i >= 0 ? d.oil_p50[i] : null, gas6: i >= 0 ? d.gas_p50[i] : null, oil12: sum(d.oil_p50.slice(0, 12)), gas12: sum(d.gas_p50.slice(0, 12)) }); }); });
+  table(document.getElementById('tc-table'), { rows, cols: [{ key: 'group', label: 'group' }, { key: 'vintage', label: 'vintage' }, { key: 'n', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'oil6', label: 'P50 oil mo-6 bbl', num: true, fmt: fmt.big }, { key: 'oil12', label: 'P50 oil 12-mo', num: true, fmt: fmt.big }, { key: 'gas6', label: 'P50 gas mo-6 mcf', num: true, fmt: fmt.big }, { key: 'gas12', label: 'P50 gas 12-mo', num: true, fmt: fmt.big }] });
+};
+
+/* ---- leading indicators */
+RENDER.indicators = () => {
+  const I = DATA.indicators; const grid = d3.select('#ind-grid');
+  const panel = (title, sub, span = 4) => { const p = grid.append('div').attr('class', `panel span${span}`); p.append('div').attr('class', 'hd').html(`<h2>${title}</h2><span class="sub">${sub}</span>`); return p.append('div').attr('class', 'bd').append('div').attr('class', 'chart').node(); };
+  const multi = (obj, parse = parseD) => Object.entries(obj).filter(([, s]) => s.d.length).map(([k, s], i) => ({ label: k, color: SERIES[i % 8], points: toPts(s, parse) }));
+  lineChart(panel('Crude &amp; gas spot', 'weekly averages, EIA · STEO monthly forecast dashed', 6), { height: 220, yZero: true, series: [{ label: 'WTI $/bbl', color: SERIES[0], points: toPts(I.spot.wti), thick: true }, { label: 'Brent $/bbl', color: SERIES[1], points: toPts(I.spot.brent) },
+    { label: 'Henry Hub $/mmbtu ×10', color: SERIES[2], points: toPts(I.spot.hh).map(p => ({ d: p.d, v: p.v == null ? null : p.v * 10 })) }, { label: 'STEO WTI', color: SERIES[0], dash: true, points: toPts(I.steo.wti) }, { label: 'STEO HH ×10', color: SERIES[2], dash: true, points: toPts(I.steo.hh).map(p => ({ d: p.d, v: p.v == null ? null : p.v * 10 })) }], yFmt: v => '$' + fmt.num(v, 0) });
+  lineChart(panel('US crude production', 'EIA monthly actual (kb/d) and STEO forecast (dashed)', 6), { height: 220, series: [{ label: 'actual kb/d', color: SERIES[0], points: toPts(I.us_crude_actual), thick: true }, { label: 'STEO forecast', color: SERIES[0], dash: true, points: toPts(I.steo.us_crude).map(p => ({ d: p.d, v: p.v == null ? null : p.v * 1000 })) }], yFmt: v => fmt.num(v) });
+  lineChart(panel('Rigs by basin', 'EIA STEO active rigs'), { height: 200, series: multi(I.rigs) });
+  lineChart(panel('Drilled but uncompleted wells', 'EIA STEO DUC inventory by basin'), { height: 200, series: multi(I.ducs) });
+  lineChart(panel('New-well oil production per rig', 'EIA STEO, b/d per rig · productivity trend'), { height: 200, series: multi(I.newwell_per_rig_oil) });
+  lineChart(panel('Legacy production change', 'EIA STEO existing-well oil decline, kb/d per month'), { height: 200, series: multi(I.legacy_decline_oil), yZero: true });
+  lineChart(panel('Crude stocks ex-SPR', 'EIA weekly, kbbl'), { height: 200, series: [{ label: 'kbbl', color: SERIES[1], points: toPts(I.stocks.crude_ex_spr), area: true }], yFmt: v => fmt.big(v) });
+  lineChart(panel('Working gas in storage', 'EIA weekly, Bcf lower 48'), { height: 200, series: [{ label: 'Bcf', color: SERIES[2], points: toPts(I.stocks.gas_storage), area: true }], yFmt: v => fmt.num(v) });
+  lineChart(panel('Managed money net length', 'CFTC disaggregated, contracts (long − short)'), { height: 200, yZero: true, series: multi(I.cftc) });
+  lineChart(panel('Dallas Fed Energy Survey', 'diffusion indexes, all firms, quarterly'), { height: 200, yZero: true, series: multi(I.dallas_fed) });
+  lineChart(panel('Crude production by state', 'EIA monthly, kb/d', 6), { height: 220, series: multi(I.state_crude_prod).slice(0, 8) });
+  lineChart(panel('Gas gross withdrawals by state', 'EIA monthly, MMcf/month', 6), { height: 220, series: multi(I.state_gas_withdrawals).slice(0, 8) });
+  grid.append('div').attr('class', 'panel span12').html(`<div class="hd"><h2>What to watch</h2><span class="sub">leading indicators for well-level credit</span></div><div class="bd note">
+   <b>Price & curve:</b> WTI/HH spot vs the STEO path drives every PV in this monitor; the deck tab shows the current assumption. <b>Activity:</b> rigs and DUCs by basin lead new-well supply by 3–9 months; falling DUCs with flat rigs means completion crews are eating inventory. <b>Productivity:</b> new-well production per rig and the vintage charts show whether operators are drilling worse rock (degradation shows up first as lower 12-month cums in the newest vintage). <b>Legacy decline:</b> the STEO legacy-change series is the treadmill operators must out-drill; a steeper number means base production is more fragile. <b>Positioning:</b> CFTC managed-money net length is a sentiment / flow gauge for price shocks. <b>Sentiment:</b> Dallas Fed business activity, outlook and uncertainty indexes turn before capex budgets. <b>Inventories:</b> crude stocks ex-SPR and gas storage vs seasonal norms set the near-term price skew. Add FRED_API_KEY to pull HY energy spreads (BAMLH0A0HYM2 / CCC) into this page.</div>`);
+};
+
+/* ---- value tab */
+RENDER.value = () => {
+  table(document.getElementById('val-states'), { rows: DATA.tables.states, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'bopd', label: 'oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'mcfd', label: 'gas mcf/d', num: true, fmt: v => fmt.num(v) },
+    { key: 'cf12', label: 'next 12m operating CF', num: true, fmt: fmt.usd }, { key: 'pv10_bear', label: 'PV10 bear', num: true, fmt: fmt.usd }, { key: 'pv10', label: 'PV10 base', num: true, fmt: fmt.usd }, { key: 'pv10_bull', label: 'PV10 bull', num: true, fmt: fmt.usd }, { key: 'rem_oil', label: 'remaining oil bbl', num: true, fmt: fmt.big }, { key: 'rem_gas', label: 'remaining gas mcf', num: true, fmt: fmt.big }] });
+  table(document.getElementById('operators'), { rows: DATA.tables.operators, cols: [{ key: 'operator', label: 'operator' }, { key: 'wells', label: 'active wells', num: true, fmt: v => fmt.num(v) }, { key: 'states', label: 'states', num: true }, { key: 'med_vintage', label: 'median vintage', num: true, fmt: v => fmt.num(v) }, { key: 'bopd', label: 'oil b/d', num: true, fmt: v => fmt.num(v) }, { key: 'mcfd', label: 'gas mcf/d', num: true, fmt: v => fmt.num(v) }, { key: 'cf12', label: 'next 12m CF', num: true, fmt: fmt.usd }, { key: 'pv10', label: 'PV10', num: true, fmt: fmt.usd }] });
+};
+show(location.hash.slice(1) || 'overview');
+</script>

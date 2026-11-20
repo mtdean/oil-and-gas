@@ -114,9 +114,22 @@ def build_views(con: duckdb.DuckDBPyConnection | None = None) -> list[str]:
         con.execute(f"CREATE OR REPLACE VIEW {table} AS SELECT {', '.join(cols)} FROM {src}")
         built.append(table)
     _build_derived(con, built)
+    _build_analytics_views(con)
     if own:
         con.close()
     return built
+
+
+def _build_analytics_views(con) -> None:
+    """Views over the analytics outputs (data/parquet/analytics/): well_monthly, well_decline, type_curves."""
+    adir = PARQUET / "analytics"
+    if not adir.exists():
+        return
+    wm = adir / "well_monthly"
+    if wm.exists() and any(wm.glob("*.parquet")):
+        con.execute(f"CREATE OR REPLACE VIEW well_monthly AS SELECT * FROM read_parquet('{wm}/*.parquet', union_by_name=true)")
+    for f in adir.glob("*.parquet"):
+        con.execute(f"CREATE OR REPLACE VIEW {f.stem} AS SELECT * FROM read_parquet('{f}')")
 
 
 def _build_derived(con, built: list[str]) -> None:
