@@ -11,6 +11,7 @@ type_curves   - P10/P50/P90/mean monthly volumes by month-since-first-production
 from __future__ import annotations
 
 import logging
+import shutil
 import warnings
 from pathlib import Path
 
@@ -93,10 +94,13 @@ UNION ALL SELECT * FROM ks_alloc
 
 
 def build_well_monthly(con: duckdb.DuckDBPyConnection) -> None:
+    """Writes state=XX.parquet files into a staging directory and swaps it in only once every state
+    succeeded, so a failed run (OOM, fd limit, ctrl-c) leaves the previous table intact."""
     out = ADIR / "well_monthly"
-    out.mkdir(parents=True, exist_ok=True)
-    for old in out.glob("*.parquet"):
-        old.unlink()
+    stage = ADIR / "_well_monthly_stage"
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir(parents=True)
     con.execute(f"CREATE OR REPLACE TEMP TABLE wm AS {WELL_MONTHLY_SQL}")
     # a wellbore can be reported under two entity rows in the same month (e.g. TX gas well + oil lease); keep one row
     con.execute("""
@@ -108,8 +112,11 @@ def build_well_monthly(con: duckdb.DuckDBPyConnection) -> None:
     """)
     states = [r[0] for r in con.execute("SELECT DISTINCT state FROM wm2 ORDER BY 1").fetchall()]
     for st in states:
-        _copy(con, f"SELECT * FROM wm2 WHERE state = '{st}' ORDER BY api10, period", out / f"state={st}.parquet")
+        _copy(con, f"SELECT * FROM wm2 WHERE state = '{st}' ORDER BY api10, period", stage / f"state={st}.parquet")
     con.execute("DROP TABLE wm; DROP TABLE wm2")
+    if out.exists():
+        shutil.rmtree(out)
+    stage.rename(out)
 
 
 # ----------------------------------------------------------------------------- well_decline

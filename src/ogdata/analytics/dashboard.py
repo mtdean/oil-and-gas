@@ -68,7 +68,9 @@ def ticker(con) -> list[dict]:
     for label, sid, unit, fmt in (("WTI", "eia:PET.RWTC.D", "$/bbl", "2"), ("BRENT", "eia:PET.RBRTE.D", "$/bbl", "2"), ("HENRY HUB", "eia:NG.RNGWHHD.D", "$/mmbtu", "2"),
                                   ("US RIGS", "eia:PET.E_ERTRR0_XR0_NUS_C.M", "rigs", "0"), ("US CRUDE", "eia:PET.MCRFPUS2.M", "kb/d", "0"),
                                   ("CRUDE STOCKS", "eia:PET.WCESTUS1.W", "kbbl", "0"), ("GAS STORAGE", "eia:NG.NW2_EPG0_SWO_R48_BCF.W", "bcf", "0"),
-                                  ("PERMIAN DUCs", "eia:STEO.DUCSPM.M", "wells", "0"), ("PERMIAN RIGS", "eia:STEO.RIGSPM.M", "rigs", "0")):
+                                  ("PERMIAN DUCs", "eia:STEO.DUCSPM.M", "wells", "0"), ("PERMIAN RIGS", "eia:STEO.RIGSPM.M", "rigs", "0"),
+                                  ("HY OAS", "fred:BAMLH0A0HYM2", "%", "2"), ("CCC OAS", "fred:BAMLH0A3HYC", "%", "2"), ("HY YIELD", "fred:BAMLH0A0HYM2EY", "%", "2"),
+                                  ("UST 10Y", "fred:DGS10", "%", "2"), ("DXY BROAD", "fred:DTWEXBGS", "idx", "1")):
         l = _latest(con, sid)
         if l:
             items.append({"label": label, "unit": unit, "fmt": fmt, **l})
@@ -104,7 +106,18 @@ def indicators(con) -> dict:
         "cftc": {},
         "state_gas_withdrawals": {st: _series(con, f"eia:NG.N9010{st}2.M", since10) for st in ("TX", "PA", "LA", "WV", "OH", "NM", "OK", "CO", "ND")},
         "state_crude_prod": {},
+        # FRED (needs FRED_API_KEY; ICE BofA history on FRED is limited to ~3 years)
+        "credit": {"HY OAS": _series(con, "fred:BAMLH0A0HYM2", since3), "CCC & lower OAS": _series(con, "fred:BAMLH0A3HYC", since3), "IG OAS": _series(con, "fred:BAMLC0A0CM", since3)},
+        "rates": {"HY effective yield": _series(con, "fred:BAMLH0A0HYM2EY", since3), "UST 10y": _series(con, "fred:DGS10", since3), "UST 2y": _series(con, "fred:DGS2", since3)},
+        "cost_ppi": {"Drilling O&G wells": _series(con, "fred:PCU213111213111", since10), "Support activities": _series(con, "fred:PCU213112213112", since10), "O&G extraction (realised price)": _series(con, "fred:PCU211211", since10)},
+        "sector": {"O&G extraction employment (k)": _series(con, "fred:CES1021100001", since10), "O&G extraction IP (2017=100)": _series(con, "fred:IPG211S", since10)},
+        "dollar": _series(con, "fred:DTWEXBGS", since3, weekly=True),
+        "brent_wti": {},
     }
+    bw = con.execute(f"""
+        SELECT date_trunc('week', b.period) d, avg(b.value - w.value) v FROM macro_series b JOIN macro_series w USING (period)
+        WHERE b.series_id = 'fred:DCOILBRENTEU' AND w.series_id = 'fred:DCOILWTICO' AND b.value IS NOT NULL AND w.value IS NOT NULL AND b.period >= '{since3}' GROUP BY 1 ORDER BY 1""").df()
+    out["brent_wti"] = {"d": [x.strftime("%Y-%m-%d") for x in bw.d], "v": [float(v) for v in bw.v]}
     for label, code in (("WTI (NYMEX)", "067651"), ("Natural gas (NYMEX)", "023651")):
         df = con.execute(f"""
             SELECT l.period d, l.value - s.value AS v FROM macro_series l JOIN macro_series s USING (period)

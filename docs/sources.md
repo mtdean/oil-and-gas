@@ -125,6 +125,8 @@ Arkansas (AOGC), Mississippi (MSOGB), Alabama (GSA/SOGB), Michigan (EGLE), Illin
 
 ### FRED (`fred`, needs `FRED_API_KEY` — https://fredaccount.stlouisfed.org/apikeys)
 * fred.stlouisfed.org CSV endpoint is bot-blocked from many hosts; api.stlouisfed.org works. Series list in `sources/fred.py` (prices, Treasuries, HY/IG/CCC OAS, dollar, O&G PPI/IP/employment).
+* Loaded 2026-11-20 with the key shared from `../situation-monitor/.env` (ogdata reads `EIA_API_KEY`/`FRED_API_KEY` from there when missing in its own `.env`; override the path with `OGDATA_SHARED_ENV`). ICE BofA series on FRED only carry ~3 years of history (licence change); everything else is full history.
+* Feeds the dashboard ticker (HY/CCC OAS, HY yield, UST 10y, broad dollar) and the Credit & cost row on the Leading indicators tab.
 
 ### CFTC COT (`cftc`, active)
 * https://www.cftc.gov/files/dea/history/fut_disagg_txt_YYYY.zip (2010+). Key codes: WTI NYMEX 067651, Henry Hub NYMEX 023651, ICE WTI 1st line 06741Q.

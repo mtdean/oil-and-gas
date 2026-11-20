@@ -3,6 +3,7 @@
 # Safe to run daily; sources skip unchanged files. Pass --no-analytics to skip the analytics rebuild.
 set -u
 cd "$(dirname "$0")/.."
+ulimit -n 65536 2>/dev/null || ulimit -n 10240 2>/dev/null  # launchd starts at 256; DuckDB opens every parquet in a view
 mkdir -p logs
 LOG="logs/update-$(date +%Y%m%d-%H%M%S).log"
 ANALYTICS=1

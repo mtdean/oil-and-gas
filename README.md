@@ -18,7 +18,7 @@ ogdata sql "select ... "         # query the DuckDB warehouse
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e .
-cp .env.example .env             # optional: EIA_API_KEY, FRED_API_KEY (free)
+cp .env.example .env             # optional: EIA_API_KEY, FRED_API_KEY (free); keys missing here are read from ../situation-monitor/.env
 .venv/bin/ogdata update --limit-years 2    # smoke test: last 2 years of everything
 .venv/bin/ogdata update                    # full history (Texas alone is ~3.5 GB download / ~1 hr)
 .venv/bin/ogdata sql "select * from production_by_state_month where state='ND' order by period desc limit 12"
@@ -98,6 +98,11 @@ daily launchd job on macOS with `scripts/install_launchd.sh` (02:30 local), or u
 ```
 30 2 * * * cd /Users/td/oil-and-gas && ./scripts/update.sh
 ```
+
+launchd and cron shells start with a 256 open-file limit, which DuckDB exceeds as soon as a view
+spans a few hundred parquet files; `ogdata` raises the soft limit to 65,536 on import and `update.sh`
+does the same, so the nightly analytics rebuild does not die with "Too many open files". The
+`well_monthly` table is built in a staging directory and swapped in only on success.
 
 Incremental logic: every URL is fetched with If-None-Match / If-Modified-Since and
 hashed; historical files older than ~2 years are treated as immutable; sources with
