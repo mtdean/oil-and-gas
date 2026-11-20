@@ -183,6 +183,14 @@ condensate is added to oil. Crown royalties replace severance taxes in the econo
   "New Report (2013 – Aug 2025)" xlsx into `data/raw/bakerhughes/` as `current_report.xlsx` / `history_2013_2025.xlsx`, then `ogdata update bakerhughes --transform-only`.
   Rig counts also arrive automatically via EIA (`eia:PET.E_ERTRR*`, `eia:STEO.RIGS*`).
 
+## Map layers (static assets in `src/ogdata/analytics/assets/`)
+* `states-10m.json`: us-atlas 3.0.1 states TopoJSON. `na-provinces.json`: Natural Earth 50m admin-1, Canada only, simplified.
+* `basins.json` (built by `scripts/build_basins_asset.py`): EIA Sedimentary Basins (`https://www.eia.gov/maps/map_data/SedimentaryBasins_US_EIA.zip`, 2011)
+  and Tight Oil / Shale Gas Plays (`.../TightOil_ShaleGas_Plays_Lower48_EIA.zip`, Dec 2021); BC Unconventional Play Trends (Montney, Horn River,
+  Liard, Cordova) from the BC Data Catalogue WFS `WHSE_MINERAL_TENURE.OG_UNCONVENTNL_PLAY_TRENDS_SP`; Alberta shale/siltstone unit outlines
+  (Duvernay, Montney, Muskwa, Nordegg, Wilrich, Exshaw) from AGS DIG 2013-0024 (`https://static.ags.aer.ca/files/document/DIG/DIG_2013_0024.zip`).
+  Saskatchewan has no public play-outline layer; the Williston basin polygon (EIA) stops at the border.
+
 ## Dead ends checked
 * National Oil & Gas Gateway (noggateway.org): offline since 2024.
 * Texas PDQ web query: no export. RRC ArcGIS REST: 403.

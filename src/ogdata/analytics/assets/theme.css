@@ -75,7 +75,12 @@ table.tb td.num, table.tb th.num { text-align: right; } table.tb tr:hover td { b
 .note { color: var(--text-secondary); font-size: 10.5px; line-height: 1.5; font-family: var(--font-sans); max-width: 70ch; }
 .note b { color: var(--text-primary); font-weight: 500; }
 .map { position: relative; } .map svg { width: 100%; height: auto; display: block; }
-.map .state { fill: #141414; stroke: #2e2e2e; stroke-width: .6px; } .map .cell { stroke: none; } .map .cell:hover { stroke: var(--text-primary); stroke-width: .8px; }
+.map .state { fill: #181818; stroke: #3d3d3d; stroke-width: .7px; } .map .outline { fill: none; stroke: #5a5a5a; stroke-width: 1px; }
+.map .cell { stroke: none; } .map .cell:hover { stroke: var(--text-primary); stroke-width: .8px; }
+.map .basin { fill: none; stroke: #3987e5; stroke-width: 1.1px; stroke-dasharray: 5 3; pointer-events: none; }
+.map .play { fill: rgba(25, 158, 112, .10); stroke: #199e70; stroke-width: .9px; pointer-events: none; }
+.map .lbl { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; fill: #cfd6dd; paint-order: stroke; stroke: #0a0a0a; stroke-width: 3px; stroke-linejoin: round; pointer-events: none; text-anchor: middle; }
+.map .lbl.play { fill: #7fd3b4; font-size: 9px; }
 .map .pin { fill: none; stroke: var(--text-accent); stroke-width: 1.5px; }
 .ramp { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-secondary); margin-top: 4px; flex-wrap: wrap; }
 .ramp .bar { width: 160px; height: 8px; border: 1px solid var(--border); }

@@ -276,7 +276,8 @@ def build(out: str | None = None) -> Path:
     tpl = (ASSETS / "dashboard_template.html").read_text()
     topo = (ASSETS / "states-10m.json").read_text()
     na_topo = (ASSETS / "na-provinces.json").read_text()
-    html = tpl.replace("/*__DATA__*/", "const DATA = " + json.dumps(_clean(data), separators=(",", ":")) + ";\nconst US_TOPO = " + topo + ";\nconst NA_TOPO = " + na_topo + ";")
+    basins_topo = (ASSETS / "basins.json").read_text()
+    html = tpl.replace("/*__DATA__*/", "const DATA = " + json.dumps(_clean(data), separators=(",", ":")) + ";\nconst US_TOPO = " + topo + ";\nconst NA_TOPO = " + na_topo + ";\nconst BASINS_TOPO = " + basins_topo + ";")
     html = html.replace("/*__THEME_CSS__*/", (ASSETS / "theme.css").read_text()).replace("/*__CHARTS_JS__*/", (ASSETS / "charts.js").read_text())
     dest = Path(out) if out else ROOT / "dashboards" / "og_monitor.html"
     dest.parent.mkdir(parents=True, exist_ok=True)
