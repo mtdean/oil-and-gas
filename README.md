@@ -128,12 +128,18 @@ Never spoof browser headers or otherwise evade a bot wall to get around these.
 
 ## Scheduling
 
-`scripts/update.sh` runs an incremental update and writes to `logs/`. Install the
-daily launchd job on macOS with `scripts/install_launchd.sh` (02:30 local), or use cron:
+`scripts/update.sh` is the whole refresh in one command: incremental update of every active source
+(conditional downloads, so unchanged files cost one request), DuckDB views, analytics tables, dashboard.
+It runs **monthly**: install the launchd job on macOS with `scripts/install_launchd.sh` (5th of the month,
+02:30 local; a run missed while the machine was asleep fires on wake), or use cron:
 
 ```
-30 2 * * * cd /Users/td/oil-and-gas && ./scripts/update.sh
+30 2 5 * * cd /Users/td/oil-and-gas && ./scripts/update.sh
 ```
+
+Run `./scripts/update.sh` by hand any time (safe to repeat; ~30-60 min when little changed, mostly the
+analytics rebuild). Prices and rig counts are daily/weekly series, so between monthly runs the ticker is up to
+a month stale; `ogdata update eia_bulk fred camacro cftc && ogdata dashboard` refreshes just those in a few minutes.
 
 launchd and cron shells start with a 256 open-file limit, which DuckDB exceeds as soon as a view
 spans a few hundred parquet files; `ogdata` raises the soft limit to 65,536 on import and `update.sh`

@@ -27,7 +27,7 @@ Nothing here is secret or licensed except where noted in §6. All sources are pu
 | `src/ogdata/analytics/` | `wellcurves` (well_monthly / decline / type curves), `valuation`, `forecast`, `economics`, `prices`, `dashboard`, `report` |
 | `docs/sources.md` | **every URL, format, quirk and dead end per source** — the first place to look when a connector breaks |
 | `docs/schema.md`, `docs/queries.md`, `docs/analytics.md` | table definitions, example SQL, analytics method |
-| `scripts/update.sh` | nightly job (update → analytics → dashboard); `scripts/rebuild_all.sh` full rebuild from nothing |
+| `scripts/update.sh` | monthly job (update → analytics → dashboard); `scripts/rebuild_all.sh` full rebuild from nothing |
 | `tests/` | `pytest` (schema, decline fit, Canada UWI/units helpers) |
 | `data/` | git-ignored. `raw/` (~10 GB), `parquet/` (~4 GB incl. 0.8 GB analytics), `warehouse.duckdb`, `runs.jsonl`, `manifest.json` |
 | `dashboards/` | git-ignored HTML output |
@@ -78,9 +78,12 @@ Then verify (§8). If a source errors, read its traceback in `logs/ogdata-YYYYMM
 
 ## 5. Keeping it fresh
 
-`scripts/update.sh` is the nightly job: incremental update of all active sources, then analytics and the
-dashboard. Install it with `scripts/install_launchd.sh` (macOS, 02:30) or cron. Two things the owner
-hit that you must keep:
+`scripts/update.sh` is the scheduled job: incremental update of all active sources, then analytics and the
+dashboard. The owner wants it **monthly**: `scripts/install_launchd.sh` installs it for the 5th of each month at
+02:30 (macOS launchd); on Linux use cron `30 2 5 * * cd <repo> && ./scripts/update.sh`. Daily price series are
+up to a month stale between runs; `ogdata update eia_bulk fred camacro cftc && ogdata dashboard` is the quick
+refresh. Pennsylvania fetches at most 15 reporting periods per run, which keeps current months fresh on a monthly
+cadence but means a historical backfill needs manual runs (owner's call). Two things the owner hit that you must keep:
 
 * **Open-file limit.** launchd/cron shells start with 256 descriptors and DuckDB opens every parquet
   file behind a view. `paths.raise_fd_limit()` and `ulimit -n` in `update.sh` handle it. If you see

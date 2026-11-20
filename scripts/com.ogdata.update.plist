@@ -10,7 +10,7 @@
   </array>
   <key>WorkingDirectory</key><string>/Users/td/oil-and-gas</string>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
+  <dict><key>Day</key><integer>5</integer><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
   <key>StandardOutPath</key><string>/Users/td/oil-and-gas/logs/launchd.out.log</string>
   <key>StandardErrorPath</key><string>/Users/td/oil-and-gas/logs/launchd.err.log</string>
   <key>RunAtLoad</key><false/>

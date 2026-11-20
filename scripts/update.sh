@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Incremental update of all active sources, then rebuild analytics tables and the HTML monitor.
-# Safe to run daily; sources skip unchanged files. Pass --no-analytics to skip the analytics rebuild.
+# Scheduled monthly (scripts/install_launchd.sh); safe to run any time, sources skip unchanged files. Pass --no-analytics to skip the analytics rebuild.
 set -u
 cd "$(dirname "$0")/.."
 ulimit -n 65536 2>/dev/null || ulimit -n 10240 2>/dev/null  # launchd starts at 256; DuckDB opens every parquet in a view
