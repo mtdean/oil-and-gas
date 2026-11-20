@@ -162,12 +162,12 @@ def hex_cells(con) -> list[dict]:
         )
         SELECT clat, clon, mode(state) st, mode(county) county, count(*) n,
                count(*) FILTER (WHERE vintage >= 2015) n15, count(*) FILTER (WHERE status = 'active') n_active,
-               count(*) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated) n18,
-               quantile_cont(oil_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'oil') cum12_oil,
-               quantile_cont(gas_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'gas') cum12_gas,
-               quantile_cont(oil_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'oil') eur_oil,
-               quantile_cont(gas_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated AND primary_product = 'gas') eur_gas,
-               quantile_cont(boe_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc <> 'lease_alloc' AND NOT history_truncated) eur_boe,
+               count(*) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated) n18,
+               quantile_cont(oil_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated AND primary_product = 'oil') cum12_oil,
+               quantile_cont(gas_cum12, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated AND primary_product = 'gas') cum12_gas,
+               quantile_cont(oil_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated AND primary_product = 'oil') eur_oil,
+               quantile_cont(gas_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated AND primary_product = 'gas') eur_gas,
+               quantile_cont(boe_eur, 0.5) FILTER (WHERE vintage >= 2018 AND alloc IN ('direct', 'single') AND NOT history_truncated) eur_boe,
                sum(pv10_usd) pv10, sum(cf_next12_usd) cf12, sum(oil_remaining_bbl + gas_remaining_mcf / 6) rem_boe,
                sum(oil_rate_bpd + gas_rate_mcfd / 6) boed, sum(oil_rate_bpd) bopd, sum(gas_rate_mcfd) mcfd,
                quantile_cont(pv10_usd, 0.5) FILTER (WHERE status = 'active') pv10_med
@@ -216,7 +216,7 @@ def vintage_table(con) -> list[dict]:
                quantile_cont(gas_eur, 0.5) FILTER (WHERE primary_product='gas' AND gas_fit_ok) eur_gas_med,
                quantile_cont(oil_ip90_pd, 0.5) FILTER (WHERE primary_product='oil') ip90_oil_med,
                quantile_cont(oil_d1_eff, 0.5) FILTER (WHERE primary_product='oil' AND oil_fit_ok) d1_oil_med
-        FROM well_decline WHERE vintage BETWEEN 2008 AND year(current_date) - 1 AND alloc <> 'lease_alloc' AND NOT history_truncated
+        FROM well_decline WHERE vintage BETWEEN 2008 AND year(current_date) - 1 AND alloc IN ('direct', 'single') AND NOT history_truncated
         GROUP BY 1, 2 HAVING count(*) >= 20 ORDER BY 1, 2
     """).df()
     return _clean(df.to_dict(orient="records"))
@@ -257,7 +257,8 @@ def tables(con) -> dict:
 def coverage(con) -> list[dict]:
     df = con.execute("""
         SELECT state, count(DISTINCT api10) wells, count(*) AS well_months, min(period) AS first, max(period) AS last,
-               count(DISTINCT api10) FILTER (WHERE alloc = 'lease_alloc') lease_alloc_wells
+               count(DISTINCT api10) FILTER (WHERE alloc = 'lease_alloc') lease_alloc_wells,
+               count(DISTINCT api10) FILTER (WHERE alloc IN ('q_split', 'a_split')) split_wells
         FROM well_monthly GROUP BY 1 ORDER BY 1
     """).df()
     fits = con.execute("SELECT state, count(*) n, count(*) FILTER (WHERE oil_fit_ok OR gas_fit_ok) fitted, count(*) FILTER (WHERE status='active') active, count(*) FILTER (WHERE history_truncated) truncated FROM well_decline GROUP BY 1").df()

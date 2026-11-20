@@ -115,14 +115,16 @@ manual drop-in. Ask the owner to download the file in a browser; do not work aro
 * **Texas is lease-level.** RRC publishes oil by lease, not by well. `well_monthly` allocates lease volumes
   to member wells (`alloc` = `direct` | `single` | `lease_alloc`; the last is an equal split and is excluded
   from type curves and analog searches by default). Kansas similar.
+* **Ohio is quarterly/annual, PA conventional is annual.** Those well totals are spread evenly across their months
+  in `well_monthly` (`alloc` = `q_split` | `a_split`) so the wells reach the PDP valuation and the map; they have no
+  real decline shape, so they are excluded from type curves and analogs like `lease_alloc`.
 * **Units.** Everything is bbl / mcf / days. Canadian metric volumes are converted (m3 × 6.28981, e3m3 × 35.3147);
   condensate is added to oil.
 * **`history_truncated`.** A well whose first observed month is the first month of its jurisdiction's published
   history, and whose well file says it was spud much earlier, is flagged in `well_decline`: vintage comes from
   the well file and it is excluded from type curves/analogs (its early decline was never observed). This is
   most of Alberta/Saskatchewan and all pre-1985 West Virginia.
-* **Ohio is quarterly, Gulf of Mexico is completion-level** — both are in `production_monthly` with
-  `period_months`/`entity_type` set, but not in `well_monthly`.
+* **Gulf of Mexico is completion-level** — in `production_monthly` with `entity_type='completion'`, not in `well_monthly`.
 * **Economics defaults** (`analytics/economics.py`) are screening placeholders: state severance taxes, Crown
   royalty approximations for Canada, per-state capex and price differentials. PV10 is not a reserve report.
 

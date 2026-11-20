@@ -61,6 +61,7 @@ def find_analogs(con, lat: float, lon: float, spec: AnalogSpec) -> pd.DataFrame:
                  "(d.oil_fit_ok OR d.gas_fit_ok)"]
         if not spec.include_lease_alloc:
             where.append("d.alloc <> 'lease_alloc'")
+        where.append("d.alloc NOT IN ('q_split', 'a_split')")  # quarterly/annual totals spread over months: no real decline shape
         where.append("NOT d.history_truncated")
         if spec.formation:
             where.append(f"lower(coalesce(d.formation, '')) LIKE '%{spec.formation.lower()}%'")

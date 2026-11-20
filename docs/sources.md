@@ -92,6 +92,13 @@ All URLs were tested on 2026-11-19. Sizes are download sizes.
 * Manual: in a browser open Data Miner → **Production** page → `CSV Production` button (no filters) → save as `data/raw/ak/production.csv`; **Well info** page → CSV export → `data/raw/ak/wells.csv`. Then `ogdata update ak --transform-only`. Columns are matched fuzzily and logged; parser is untested until real exports are present. Production is well-level monthly back to 1958, APIs are 14-digit (prefix 50).
 * The daily Access extract https://aogcccdnstorage.blob.core.windows.net/webextract/AOGCC_DataExtract.zip (39 MB .mdb, needs `mdbtools`) is an alternative if it becomes reachable.
 
+### South Dakota — DANR (`sd`, active)
+* `https://sddenr.net/pubs/og/SDOILexport.zip` (18 MB, monthly): `Oil_Gas_Production_All_Years.xlsx` sheet `Export_4_Web` = per-well
+  monthly production 1950s+ (API, days, oil, total/marketed gas, water); `Wells.xlsx` (lat/lon NAD83, spud/completion as Excel serials,
+  status, field, unit); `Well_Completions.xlsx` (wellbore type, depths, producing formation); `Formation_Tops.xlsx`; UIC injection.
+  Also `https://sddenr.net/pubs/og/SDOIL.gdb.zip` (file geodatabase: wells, recovery units, field boundaries).
+* ~2,100 wells, mostly Harding County Red River; Minnesota has no oil or gas production (nothing to load).
+
 ### Other states (planned, lower priority)
 Arkansas (AOGC), Mississippi (MSOGB), Alabama (GSA/SOGB), Michigan (EGLE), Illinois (ISGS), Kentucky (KGS), Nebraska (NOGCC), Virginia (DMME), New York (DEC), Nevada, South Dakota.
 

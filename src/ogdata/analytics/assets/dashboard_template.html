@@ -77,7 +77,7 @@
 <script>
 /*__DATA__*/
 /*__CHARTS_JS__*/
-const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska',AB:'Alberta',SK:'Saskatchewan',BC:'British Columbia',MB:'Manitoba'};
+const STATE_NAMES = {TX:'Texas',NM:'New Mexico',ND:'North Dakota',CO:'Colorado',WY:'Wyoming',UT:'Utah',MT:'Montana',KS:'Kansas',WV:'West Virginia',PA:'Pennsylvania',OH:'Ohio',GOM:'Gulf of Mexico',OK:'Oklahoma',LA:'Louisiana',CA:'California',AK:'Alaska',AB:'Alberta',SK:'Saskatchewan',BC:'British Columbia',MB:'Manitoba',SD:'South Dakota'};
 const toPts = (s, parse = parseD) => s.d.map((d, i) => ({ d: parse(d), v: s.v[i] }));
 const sum = a => a.reduce((x, y) => x + (y || 0), 0);
 document.getElementById('meta').textContent = `data as of ${DATA.generated}`;
@@ -120,7 +120,7 @@ RENDER.overview = () => {
   lineChart(document.getElementById('deck-chart'), { height: 240, yZero: true, series: [{ label: 'WTI $/bbl (deck)', color: SERIES[0], points: pdm.map((d, i) => ({ d, v: cf.price_deck.wti[i] })), thick: true },
     { label: 'Henry Hub $/mmbtu ×10 (deck)', color: SERIES[1], points: pdm.map((d, i) => ({ d, v: cf.price_deck.hh[i] * 10 })) }], yFmt: v => '$' + fmt.num(v, 0) });
   document.getElementById('deck-sub').textContent = `EIA STEO through its horizon, then flat · vol oil ${(cf.price_deck.vol_oil * 100).toFixed(0)}% / gas ${(cf.price_deck.vol_gas * 100).toFixed(0)}% ann., ρ ${cf.price_deck.rho.toFixed(2)} (Monte Carlo inputs)`;
-  table(document.getElementById('coverage'), { rows: DATA.coverage, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'lease_alloc_wells', label: 'lease-allocated', num: true, fmt: v => fmt.num(v) }, { key: 'truncated', label: 'pre-history wells', num: true, fmt: v => fmt.num(v) },
+  table(document.getElementById('coverage'), { rows: DATA.coverage, cols: [{ key: 'state', label: 'state', fmt: v => STATE_NAMES[v] || v }, { key: 'wells', label: 'wells', num: true, fmt: v => fmt.num(v) }, { key: 'lease_alloc_wells', label: 'lease-allocated', num: true, fmt: v => fmt.num(v) }, { key: 'split_wells', label: 'qtr/annual split', num: true, fmt: v => fmt.num(v) }, { key: 'truncated', label: 'pre-history wells', num: true, fmt: v => fmt.num(v) },
     { key: 'fitted', label: 'decline fits', num: true, fmt: v => fmt.num(v) }, { key: 'active', label: 'active', num: true, fmt: v => fmt.num(v) }, { key: 'well_months', label: 'well-months', num: true, fmt: v => fmt.num(v) }, { key: 'first', label: 'first', fmt: v => (v || '').slice(0, 7) }, { key: 'last', label: 'last', fmt: v => (v || '').slice(0, 7) }] });
 };
 

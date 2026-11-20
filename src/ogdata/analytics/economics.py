@@ -28,6 +28,7 @@ STATE_TAX = {
     "CA": (0.0, 0.0, "CA no severance; ad valorem ~1% of reserve value, assessment fee"),
     "AK": (0.0, 0.0, "AK production tax is net-profits based; model separately"),
     "GOM": (0.0, 0.0, "Federal offshore: no state tax; royalty 18.75% (set nri)"),
+    "SD": (0.045, 0.045, "SD 4.5% severance + 0.24% conservation tax"),
     # Canada: Crown royalties are price- and rate-sensitive sliding scales, not severance taxes. These are
     # flat effective placeholders for Crown land (freehold ~ 12.5-17.5% lessor royalty instead; set nri).
     "AB": (0.12, 0.08, "Alberta Modernized Royalty Framework: 5% until C* payout then 5-40% sliding; ~12% oil / 8% gas effective placeholder"),
@@ -37,7 +38,7 @@ STATE_TAX = {
 }
 # Typical 2024-26 D&C+facilities cost for a modern horizontal well, $MM, by state (used when capex not given).
 STATE_CAPEX_MM = {"TX": 8.0, "NM": 8.5, "ND": 7.5, "CO": 5.5, "WY": 7.0, "OK": 7.5, "UT": 6.0, "MT": 7.5, "LA": 11.0, "PA": 9.0, "WV": 9.0, "OH": 9.0, "KS": 1.2, "CA": 2.0,
-                  "AB": 6.5, "SK": 3.0, "BC": 7.5, "MB": 2.5}  # Canada in US$: Montney/Duvernay ~C$8-10M, Viewfield Bakken ~C$4M, BC Montney ~C$10M
+                  "AB": 6.5, "SK": 3.0, "BC": 7.5, "MB": 2.5, "SD": 2.5}  # Canada in US$: Montney/Duvernay ~C$8-10M, Viewfield Bakken ~C$4M, BC Montney ~C$10M
 
 # Default price differentials vs WTI ($/bbl) and Henry Hub ($/mmbtu) where the state's benchmark is not US Gulf/Mid-Con.
 # Canadian light (MSW) trades ~$5-10 under WTI, heavy (WCS) $12-25 under: override --oil-diff for heavy-oil wells.

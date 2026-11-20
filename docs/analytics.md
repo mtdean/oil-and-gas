@@ -30,6 +30,13 @@ Caveats: EURs for very young wells (< 12 months) are unstable (wide `b`); lease-
 wells inherit the lease's shape; Ohio (quarterly/annual) and the Gulf of Mexico (completion-level)
 are not in `well_monthly`.
 
+### Quarterly and annual wells (`alloc` = `q_split` / `a_split`)
+
+Ohio reports horizontal wells quarterly and everything else annually; Pennsylvania conventional wells are annual.
+`well_monthly` spreads those totals evenly over the months of the period (monthly rows win over quarterly, quarterly
+over annual for the same well), so the wells get PDP fits, values and map cells. Because the within-period shape is
+invented, these wells are excluded from type curves and analog searches, like Texas `lease_alloc` wells.
+
 ### Truncated history
 
 `well_decline.history_truncated` is true when a well's first observed month is the first month of its

@@ -69,6 +69,23 @@ tx_alloc AS (
     WHERE p.state = 'TX' AND p.entity_type = 'lease'
       AND NOT EXISTS (SELECT 1 FROM direct d WHERE d.state = 'TX' AND d.api10 = m.api10 AND d.period = p.period)
 ),
+-- quarterly (Ohio horizontals) and annual (Ohio verticals, PA conventional) well totals spread evenly over
+-- their months so those wells reach the PDP valuation and the map; flagged q_split / a_split and kept out of
+-- type curves and analog sets. Monthly rows win over quarterly, quarterly over annual, for the same well.
+split_rows AS (
+    SELECT api10, state, period, period_months::INTEGER AS pm, oil_bbl, gas_mcf, water_bbl, days_on, operator, county, formation, source,
+           unnest(range(0, period_months::INTEGER)) AS i
+    FROM production_monthly
+    WHERE entity_type IN ('well', 'well_formation') AND api10 IS NOT NULL AND period_months IN (3, 12) AND state = '{st}'
+),
+split AS (
+    SELECT a.api10, a.state, a.period + to_months(a.i) AS period,
+           a.oil_bbl / a.pm AS oil_bbl, a.gas_mcf / a.pm AS gas_mcf, a.water_bbl / a.pm AS water_bbl, a.days_on / a.pm AS days_on,
+           a.operator, a.county, a.formation, CASE WHEN a.pm = 3 THEN 'q_split' ELSE 'a_split' END AS alloc, 1 AS n_wells, a.source
+    FROM split_rows a
+    WHERE NOT EXISTS (SELECT 1 FROM direct d WHERE d.api10 = a.api10 AND d.period = a.period + to_months(a.i))
+      AND (a.pm = 3 OR NOT EXISTS (SELECT 1 FROM split_rows q WHERE q.pm = 3 AND q.api10 = a.api10 AND year(q.period) = year(a.period)))
+),
 ks_members AS (
     SELECT entity_id, api10, valid_from, valid_to FROM entity_wells WHERE source = 'ks' AND api10 IS NOT NULL
 ),
@@ -88,6 +105,7 @@ ks_alloc AS (
     WHERE p.state = 'KS' AND p.entity_type = 'lease' AND coalesce(p.period_months, 1) = 1
 )
 SELECT * FROM direct
+UNION ALL SELECT * FROM split
 {tx_union}
 {ks_union}
 """
@@ -111,6 +129,7 @@ def build_well_monthly(con: duckdb.DuckDBPyConnection) -> None:
         SELECT DISTINCT state FROM production_monthly
         WHERE state IS NOT NULL AND coalesce(period_months, 1) = 1
           AND (entity_type IN ('well', 'well_formation') AND api10 IS NOT NULL OR state IN ('TX', 'KS') AND entity_type = 'lease')
+           OR state IS NOT NULL AND period_months IN (3, 12) AND entity_type IN ('well', 'well_formation') AND api10 IS NOT NULL
         ORDER BY 1""").fetchall()]
     # one state at a time, streamed straight to parquet: materialising the whole country in one temp table
     # needs more than 10 GB once Canada is included. A wellbore can be reported under two entity rows in the
@@ -230,6 +249,9 @@ def build_well_decline(con: duckdb.DuckDBPyConnection) -> None:
         n_wells = con.execute("SELECT count(DISTINCT api10) FROM wm_state").fetchone()[0]
         max_period = con.execute("SELECT max(period) FROM wm_state").fetchone()[0]
         min_period = con.execute("SELECT min(period) FROM wm_state").fetchone()[0]
+        # annual / quarterly reporters lag the monthly ones (Ohio verticals end in December, horizontals mid-year), so
+        # "active" compares each well with the latest month of its own reporting cadence, not the state's overall max
+        max_by_alloc = dict(con.execute("SELECT alloc, max(period) FROM wm_state GROUP BY 1").fetchall())
         # wells drilled before the state's published history begins (WV 1985, Petrinex 2022, ...): their first
         # observed month is not their first production month, so vintage comes from the well file instead and
         # they are kept out of type curves / analogs (history_truncated).
@@ -260,7 +282,8 @@ def build_well_decline(con: duckdb.DuckDBPyConnection) -> None:
             # production files without a formation (Petrinex) fall back to the well file's pool / formation
             df["formation"] = df["formation"].where(df["formation"].notna() & (df["formation"] != ""), df["well_formation"])
             df = df.drop(columns=["ref_date", "well_formation"])
-            df["status"] = np.where(pd.to_datetime(df["last_prod"]) >= pd.Timestamp(max_period) - pd.DateOffset(months=3), "active", "inactive")
+            cadence_max = pd.to_datetime(df["alloc"].map(max_by_alloc)).fillna(pd.Timestamp(max_period))
+            df["status"] = np.where(pd.to_datetime(df["last_prod"]) >= cadence_max - pd.DateOffset(months=3), "active", "inactive")
             df["state_max_period"] = pd.Timestamp(max_period)
             frames.append(df)
             log.info("%s decline: %d-%d of %d wells", st, lo, min(lo + CHUNK, n_wells), n_wells)
@@ -288,7 +311,7 @@ def build_type_curves(con: duckdb.DuckDBPyConnection) -> None:
             SELECT dense_rank() OVER (ORDER BY m.api10)::INTEGER AS wid, m.state, d.county, d.formation, {VINTAGE_SQL} AS vintage_bucket,
                    datediff('month', d.first_prod, m.period)::SMALLINT AS t, m.oil_bbl::FLOAT AS oil_bbl, m.gas_mcf::FLOAT AS gas_mcf
             FROM _wm m JOIN _wd d USING (api10, state)
-            WHERE d.vintage >= 2005 AND d.alloc <> 'lease_alloc' AND NOT d.history_truncated AND m.period >= d.first_prod AND datediff('month', d.first_prod, m.period) < 120
+            WHERE d.vintage >= 2005 AND d.alloc IN ('direct', 'single') AND NOT d.history_truncated AND m.period >= d.first_prod AND datediff('month', d.first_prod, m.period) < 120
         ) TO '{stage}' (FORMAT PARQUET, COMPRESSION ZSTD)
     """)
     con.execute(f"CREATE OR REPLACE VIEW norm AS SELECT * FROM read_parquet('{stage}')")
